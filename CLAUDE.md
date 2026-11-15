@@ -14,6 +14,10 @@ DevSpot의 True Markets Gateway API 해커톤(4주, 1등 $1,000) 참가 프로�
   - 서버: `src/lib/server/tm.ts`(인증·종목 묶기·시세·견적), `src/app/api/{stocks,prices,history,quote}`
   - 키: `jobs/wallet/.env.local`(credentials.env 에서 TRUEMARKETS_KEY_ID · _PRIVATE_JWK · _DEMO_SIGNER_PUB 복사, git 제외)
   - 데모 지갑: 브라우저 localStorage, 1,000 USDC 로 시작. 사기=True Markets 실견적, 팔기=현재가 예상(빈 지갑은 팔기 견적 422)
+  - 배포: Azure Static Web Apps(Free, Next.js 하이브리드) `moduwallet`, 리소스 그룹 `moduwallet`(koreacentral),
+    앱 지역 eastasia(SWA 는 한국 리전 없음). 주소 https://agreeable-grass-01185c300.3.azurestaticapps.net
+    main 에 push 하면 `.github/workflows/azure-static-web-apps-*.yml` 이 자동 배포. 키 3개는 SWA 앱 설정에 있음
+    Node 는 22.x 고정(SWA 는 18·20·22 만, 24 는 실패). next.config `output: "standalone"`
   - 시세 API 는 gateway asset 의 `economic_asset_id` 로 부른다(`id` 는 404)
 - 샌드박스가 없어 모든 주문이 실제 온체인 거래다. 주문 코드는 소액으로만 시험한다.
 - API 키·signer 키는 `D:\credentials.env` 에만 둔다(커밋 금지).
