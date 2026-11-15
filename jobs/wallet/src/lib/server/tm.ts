@@ -4,10 +4,11 @@ import { createPrivateKey, sign, type JsonWebKey } from "node:crypto";
 import type { HistoryPoint, Price, Range, Stock, TradeQuote } from "../types";
 import { NAMES_KO } from "./names-ko";
 
-const API = "https://api.truemarkets.co";
+// 테스트 서버(UAT, 모의투자)를 쓰려면 TRUEMARKETS_API=https://api.uat.truemarkets.co 와 UAT 용 키를 넣는다
+const API = process.env.TRUEMARKETS_API || "https://api.truemarkets.co";
 
 // ---------- 공통 ----------
-async function tm<T>(path: string, init?: RequestInit & { token?: string; onBehalfOf?: string }): Promise<{ status: number; body: T }> {
+export async function tm<T>(path: string, init?: RequestInit & { token?: string; onBehalfOf?: string }): Promise<{ status: number; body: T }> {
   const headers: Record<string, string> = { "content-type": "application/json" };
   if (init?.token) headers.authorization = `Bearer ${init.token}`;
   if (init?.onBehalfOf) headers["TM-On-Behalf-Of"] = init.onBehalfOf;
@@ -16,7 +17,7 @@ async function tm<T>(path: string, init?: RequestInit & { token?: string; onBeha
   return { status: res.status, body: (text ? JSON.parse(text) : {}) as T };
 }
 
-function cached<T>(ttlMs: number, fn: () => Promise<T>) {
+export function cached<T>(ttlMs: number, fn: () => Promise<T>) {
   let value: T | undefined;
   let at = 0;
   let pending: Promise<T> | undefined;
@@ -152,7 +153,7 @@ function env(name: string) {
   return v;
 }
 
-const orgToken = cached(50 * 60_000, async () => {
+export const orgToken = cached(50 * 60_000, async () => {
   const keyId = env("TRUEMARKETS_KEY_ID");
   const jwk = JSON.parse(env("TRUEMARKETS_PRIVATE_JWK")) as JsonWebKey;
   const key = createPrivateKey({ key: jwk, format: "jwk" });
@@ -168,7 +169,7 @@ const orgToken = cached(50 * 60_000, async () => {
 });
 
 /** 데모 사용자(지갑 비어 있음). 같은 external_ref_id 면 같은 사용자를 돌려준다 */
-const demoUser = cached(24 * 3600_000, async () => {
+export const demoUser = cached(24 * 3600_000, async () => {
   const { token, orgId } = await orgToken();
   for (let i = 0; i < 5; i++) {
     const { status, body } = await tm<{ user_id?: string }>(`/v1/account/organizations/${orgId}/users`, {
@@ -184,46 +185,81 @@ const demoUser = cached(24 * 3600_000, async () => {
 });
 
 // ---------- 견적 ----------
-type OrderResp = {
-  order_id?: string;
-  quote?: { qty?: string; qty_out?: string; fee?: string; issues?: string[] };
-  message?: string;
-};
+export type QuoteResp = { qty?: string; price?: string; notional?: string; fee?: string; message?: string };
+
+/** /quotes 호출. True Markets 가 가끔 503 을 주므로 5xx 면 한 번 더 */
+export async function quotesApi(token: string, userId: string, body: Record<string, unknown>) {
+  const call = () => tm<QuoteResp>("/v1/gateway/quotes", { method: "POST", token, onBehalfOf: userId, body: JSON.stringify(body) });
+  const r = await call();
+  if (r.status >= 500) {
+    await new Promise((res) => setTimeout(res, 400));
+    return call();
+  }
+  return r;
+}
 
 /**
- * 실제 견적. 데모 사용자는 잔고가 0이라 주문은 만들어지지 않고(issues: Insufficient balance) 견적 값만 온다.
- * 실행(execute)은 부르지 않으므로 돈이 움직이지 않는다.
+ * 실제 견적(POST /v1/gateway/quotes). 주문을 만들지 않아 잔고 없이도 사기·팔기 모두 나온다.
+ * True Markets 규칙: 사기는 달러 금액(qty_unit=quote)만, 팔기는 주식 수(qty_unit=base)만 받는다.
+ * 그래서 사기를 "주"로, 팔기를 "달러"로 정하면 현재가로 환산해서 보낸다.
+ * 수수료는 살 때 금액에 더해지고, 팔 때 받는 돈에서 빠진다.
  */
-export async function quote(symbol: string, side: "buy" | "sell", usd: number): Promise<TradeQuote> {
+export async function quote(symbol: string, side: "buy" | "sell", amount: { usd?: number; qty?: number }): Promise<TradeQuote> {
   const l = await listing(symbol);
   const expiresAt = new Date(Date.now() + 110_000).toISOString();
   const [p] = await prices([l.symbol]);
+  const FEE = 0.002;
+  // 보낼 값: 사기 → 수수료 빼기 전 달러, 팔기 → 주식 수
+  let send: number;
+  if (side === "buy") {
+    const total = amount.usd ?? (amount.qty ?? 0) * (p?.price ?? 0) * (1 + FEE); // 사용자가 정한 총액(수수료 포함)
+    send = total / (1 + FEE);
+  } else {
+    send = amount.qty ?? (amount.usd ?? 0) / (p?.price ?? 1);
+  }
+  if (!(send > 0)) throw new HttpError(400, "amount required");
+
   const fallback = (): TradeQuote => {
     if (!p) throw new HttpError(502, "no price");
-    const fee = usd * 0.002;
-    return side === "buy"
-      ? { symbol: l.symbol, side, usd, qty: (usd - fee) / p.price, price: p.price, fee, expiresAt, source: "estimate" }
-      : { symbol: l.symbol, side, usd: usd - fee, qty: usd / p.price, price: p.price, fee, expiresAt, source: "estimate" };
+    if (side === "buy") {
+      const fee = send * FEE;
+      return { symbol: l.symbol, side, usd: send + fee, qty: send / p.price, price: p.price, fee, expiresAt, source: "estimate" };
+    }
+    const gross = send * p.price;
+    return { symbol: l.symbol, side, usd: gross * (1 - FEE), qty: send, price: p.price, fee: gross * FEE, expiresAt, source: "estimate" };
   };
-  // 팔기는 True Markets 가 보유 수량을 먼저 검사해서(422 insufficient_balance) 빈 데모 지갑으로는 견적이 안 나온다.
-  // 팔 때는 현재가 기준 예상값을 쓴다(실거래 모드에서는 실제 보유분으로 견적을 받는다).
-  if (side === "sell") return fallback();
+
   try {
     const { token } = await orgToken();
     const userId = await demoUser();
-    // 살 때: USDC 금액(quote 단위)
-    const body = { asset_id: l.assetId, qty: usd.toFixed(2), qty_unit: "quote", side, type: "market" };
-    const { status, body: o } = await tm<OrderResp>("/v1/gateway/orders", {
-      method: "POST",
-      token,
-      onBehalfOf: userId,
-      body: JSON.stringify(body),
-    });
-    const q = o.quote;
-    if (status >= 300 || !q?.qty_out) return fallback();
+    const ask = (n: number) =>
+      quotesApi(
+        token,
+        userId,
+        side === "buy"
+          ? { asset_id: l.assetId, qty: n.toFixed(2), qty_unit: "quote", side }
+          : { asset_id: l.assetId, qty: n.toFixed(8), qty_unit: "base", side },
+      );
+    let { status, body: q } = await ask(send);
+    if (status !== 200 || !q.qty || !q.price) return fallback();
+    // 주 단위로 살 때: 받는 수량이 원하는 수량과 다르면 금액을 비례해서 한 번 다시 받는다
+    if (side === "buy" && amount.qty && Math.abs(Number(q.qty) / amount.qty - 1) > 0.0005) {
+      const again = await ask(send * (amount.qty / Number(q.qty)) + 0.01);
+      if (again.status === 200 && again.body.qty && again.body.price) ({ status, body: q } = again);
+    }
+    const qty = Number(q.qty);
+    const notional = Number(q.notional ?? qty * Number(q.price));
     const fee = Number(q.fee ?? 0);
-    const qty = Number(q.qty_out);
-    return { symbol: l.symbol, side, usd, qty, price: (usd - fee) / qty, fee, expiresAt, source: "truemarkets" };
+    return {
+      symbol: l.symbol,
+      side,
+      usd: side === "buy" ? notional + fee : notional - fee,
+      qty,
+      price: Number(q.price),
+      fee,
+      expiresAt,
+      source: "truemarkets",
+    };
   } catch (e) {
     if (e instanceof HttpError && e.status === 404) throw e;
     return fallback();

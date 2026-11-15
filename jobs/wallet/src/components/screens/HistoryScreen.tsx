@@ -4,14 +4,16 @@ import Link from "next/link";
 import { useMemo } from "react";
 import { usePortfolio } from "@/lib/client";
 import type { Trade } from "@/lib/types";
-import { fmtDay, fmtQty, fmtTime, fmtUsd, stockHref } from "../format";
+import { fmtDay, fmtQty, fmtSignedUsd, fmtTime, fmtUsd, stockHref, toneOf, toneText } from "../format";
 import { useStocks } from "../market";
+import { SIDE, usePerps } from "../perp";
 import { TabBar } from "../TabBar";
 import { btnPrimary, Card, EmptyState, Screen, StockLogo, unitOf } from "../ui";
 
 export function HistoryScreen() {
   const { trades } = usePortfolio();
   const stocks = useStocks();
+  const perps = usePerps();
 
   const groups = useMemo(() => {
     const out: { day: string; items: Trade[] }[] = [];
@@ -37,7 +39,7 @@ export function HistoryScreen() {
             <EmptyState
               emoji="🧾"
               title="아직 거래가 없어요"
-              message="주식을 사거나 팔면 여기에 차곡차곡 쌓여요."
+              message="주식을 사고팔거나 레버리지를 하면 여기에 차곡차곡 쌓여요."
               action={
                 <Link href="/stocks" className={`${btnPrimary} !h-12 px-6 !text-[16px]`}>
                   주식 둘러보기
@@ -51,6 +53,14 @@ export function HistoryScreen() {
               <h2 className="px-5 pb-1 text-[14px] font-semibold text-mute">{g.day}</h2>
               <ul>
                 {g.items.map((t) => {
+                  if (t.kind && t.kind !== "spot") {
+                    const market = perps.data?.find((m) => m.symbol === t.symbol);
+                    return (
+                      <li key={t.id}>
+                        <PerpRow t={t} name={market?.nameKo} icon={market?.icon} />
+                      </li>
+                    );
+                  }
                   const meta = stocks.data?.find((s) => s.symbol === t.symbol);
                   const buy = t.side === "buy";
                   return (
@@ -95,5 +105,53 @@ export function HistoryScreen() {
 
       <TabBar active="history" />
     </Screen>
+  );
+}
+
+/** 레버리지 거래 한 줄: 시작 / 정리 / 청산 */
+function PerpRow({ t, name, icon }: { t: Trade; name?: string; icon?: string }) {
+  const side = t.positionSide ?? (t.side === "buy" ? "long" : "short");
+  const s = SIDE[side];
+  const pnl = t.pnl ?? 0;
+  const tone = toneOf(pnl, 0.005);
+  const open = t.kind === "perp-open";
+  const dead = t.kind === "perp-liquidated";
+  return (
+    <Link href="/leverage" className="row-press flex min-h-[68px] items-center gap-3 px-5 py-3">
+      <StockLogo symbol={t.symbol} icon={icon} />
+      <span className="min-w-0 flex-1">
+        <span className="flex items-center gap-1.5">
+          <span className="truncate text-[16px] font-semibold text-ink">{name ?? t.symbol}</span>
+          <span
+            className={`shrink-0 rounded-md px-1.5 py-0.5 text-[12px] font-bold ${
+              dead ? "bg-ink text-white" : open ? `${s.soft} ${s.text}` : "bg-fill text-sub"
+            }`}
+          >
+            {dead ? "청산" : open ? "시작" : "정리"}
+          </span>
+        </span>
+        <span className="block truncate text-[13px] tabular-nums text-mute">
+          {fmtTime(t.at)} · {t.leverage ?? 1}배 {s.dir}
+        </span>
+      </span>
+      <span className="shrink-0 text-right">
+        {open ? (
+          <>
+            <span className="block text-[16px] font-semibold tabular-nums text-ink">-{fmtUsd(t.usd)}</span>
+            <span className="block text-[12px] tabular-nums text-hint">수수료 {fmtUsd(t.fee)}</span>
+          </>
+        ) : (
+          <>
+            <span className={`block text-[16px] font-semibold tabular-nums ${dead ? "text-ink" : "text-primary"}`}>
+              {dead ? fmtUsd(0) : `+${fmtUsd(t.usd)}`}
+            </span>
+            <span className={`block text-[12px] font-medium tabular-nums ${toneText[tone]}`}>
+              {dead ? "모두 잃음 " : "손익 "}
+              {fmtSignedUsd(pnl)}
+            </span>
+          </>
+        )}
+      </span>
+    </Link>
   );
 }

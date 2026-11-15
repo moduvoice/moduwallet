@@ -21,6 +21,10 @@
   --color-down: #3182f6;
   --color-down-soft: #e8f3ff;
   --color-ok: #03b26c;
+  --color-ok-soft: #e6f7f0;
+  --color-warn: #d97706;
+  --color-warn-soft: #fff4e0;
+  --color-violet: #7b61ff;
 
   --font-sans:
     "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, system-ui, "Apple SD Gothic Neo",
@@ -228,4 +232,61 @@ button:disabled {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* 입력값이 최대로 바뀌었을 때 살짝 흔들기 */
+.anim-shake {
+  animation: shake 0.36s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+}
+@keyframes shake {
+  15% {
+    transform: translateX(-7px);
+  }
+  35% {
+    transform: translateX(6px);
+  }
+  55% {
+    transform: translateX(-4px);
+  }
+  75% {
+    transform: translateX(2px);
+  }
+  100% {
+    transform: translateX(0);
+  }
+}
+
+/* 배수 슬라이더(레버리지 시작하기) */
+.lev-range {
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+.lev-range::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--color-fill-strong);
+}
+.lev-range::-moz-range-track {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--color-fill-strong);
+}
+.lev-range::-webkit-slider-thumb {
+  appearance: none;
+  width: 28px;
+  height: 28px;
+  margin-top: -11px;
+  border-radius: 50%;
+  background: #fff;
+  border: 1px solid var(--color-line);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+}
+.lev-range::-moz-range-thumb {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #fff;
+  border: 1px solid var(--color-line);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
 }

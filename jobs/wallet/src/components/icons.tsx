@@ -111,3 +111,9 @@ export const IconRefresh = (p: P) => (
     <path d="M19 4.5V8h-3.5" />
   </Base>
 );
+
+export const IconBolt = (p: P) => (
+  <Base {...p}>
+    <path d="M13 3L5.5 13.5H11L10 21l8-11h-5.5z" />
+  </Base>
+);

@@ -74,3 +74,16 @@ export const fmtDateTime = (iso: string) => safe(dateTimeFmt, iso);
 
 /** 종목 상세 주소 */
 export const stockHref = (symbol: string) => `/stocks/${encodeURIComponent(symbol)}`;
+
+/** 받침에 맞는 조사 고르기: josa("애플", "이", "가") → "이" */
+export function josa(word: string, withFinal: string, without: string): string {
+  const w = word.replace(/[^0-9A-Za-z가-힣]/g, "");
+  const ch = w.charAt(w.length - 1);
+  if (!ch) return without;
+  const code = ch.charCodeAt(0);
+  let final: boolean;
+  if (code >= 0xac00 && code <= 0xd7a3) final = (code - 0xac00) % 28 !== 0;
+  else if (/[0-9]/.test(ch)) final = "013678".includes(ch); // 영 일 삼 육 칠 팔
+  else final = "LMNRlmnr".includes(ch); // 엘 엠 엔 알
+  return final ? withFinal : without;
+}

@@ -7,9 +7,11 @@ import { getHistory, useAsync, usePortfolio } from "@/lib/client";
 import type { HistoryPoint, Range, Stock } from "@/lib/types";
 import { Chart } from "../Chart";
 import { fmtDate, fmtDateTime, fmtPct, fmtQty, fmtSignedUsd, fmtUsd, toneArrow, toneOf, toneText } from "../format";
-import { IconBack } from "../icons";
+import { IconBack, IconBolt, IconChevron } from "../icons";
 import { usePrices, useStocks } from "../market";
 import { OrderSheet } from "../OrderSheet";
+import { usePerpPrices, usePerps } from "../perp";
+import { PerpOpenSheet } from "../PerpOpenSheet";
 import { btnGray, Card, ErrorState, Screen, Skeleton, StockLogo, unitOf } from "../ui";
 
 const RANGES: { key: Range; label: string; word: string }[] = [
@@ -255,6 +257,8 @@ export function StockDetailScreen() {
             </Card>
           )}
 
+          <LeverageEntry symbol={symbol} />
+
           <Card className="px-5 py-5">
             <h2 className="text-[16px] font-bold text-ink">토큰화 {stock.kind === "crypto" ? "자산" : "주식"}이에요</h2>
             <p className="mt-1.5 text-[14px] leading-relaxed text-mute">
@@ -300,6 +304,35 @@ export function StockDetailScreen() {
         price={price?.price}
       />
     </Screen>
+  );
+}
+
+/** 같은 종목을 레버리지로도 거래할 수 있으면 보여 주는 입구 */
+function LeverageEntry({ symbol }: { symbol: string }) {
+  const perps = usePerps();
+  const market = perps.data?.find((m) => m.symbol === symbol);
+  const symbols = useMemo(() => (market ? [market.symbol] : []), [market]);
+  const { prices } = usePerpPrices(symbols);
+  const [open, setOpen] = useState(false);
+  if (!market) return null;
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="press flex min-h-[64px] w-full items-center gap-3 rounded-card bg-card px-5 py-3 text-left"
+      >
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-fill text-ink" aria-hidden="true">
+          <IconBolt size={20} />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-[15px] font-bold text-ink">레버리지로 거래하기</span>
+          <span className="block text-[13px] text-mute">최대 {market.maxLeverage}배 · 내릴 때도 벌 수 있어요</span>
+        </span>
+        <IconChevron size={18} className="shrink-0 text-faint" />
+      </button>
+      <PerpOpenSheet open={open} onClose={() => setOpen(false)} market={market} price={prices[market.symbol]} />
+    </>
   );
 }
 

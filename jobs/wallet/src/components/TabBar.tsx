@@ -1,15 +1,16 @@
 import Link from "next/link";
-import { IconChart, IconReceipt, IconWallet } from "./icons";
+import { IconBolt, IconChart, IconReceipt, IconWallet } from "./icons";
 
 const TABS = [
   { key: "home", href: "/", label: "홈", Icon: IconWallet },
   { key: "stocks", href: "/stocks", label: "주식", Icon: IconChart },
+  { key: "leverage", href: "/leverage", label: "레버리지", Icon: IconBolt },
   { key: "history", href: "/history", label: "내역", Icon: IconReceipt },
 ] as const;
 
 export type TabKey = (typeof TABS)[number]["key"];
 
-/** 아래 탭 3개(홈 / 주식 / 내역) */
+/** 아래 탭 4개(홈 / 주식 / 레버리지 / 내역) */
 export function TabBar({ active }: { active: TabKey }) {
   return (
     <nav

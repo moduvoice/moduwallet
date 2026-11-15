@@ -1,7 +1,7 @@
 "use client";
 // 화면에서 쓰는 데이터 함수. 화면 코드는 이 파일의 함수만 부른다(fetch 를 직접 쓰지 않는다).
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { HistoryPoint, Portfolio, Price, Range, Stock, Trade, TradeQuote } from "./types";
+import type { HistoryPoint, PerpCloseQuote, PerpMarket, PerpQuote, Portfolio, Position, Price, Range, Stock, Trade, TradeQuote } from "./types";
 
 async function json<T>(res: Response): Promise<T> {
   if (!res.ok) throw new Error(`${res.status} ${await res.text().catch(() => "")}`);
@@ -24,18 +24,72 @@ export function getHistory(symbol: string, range: Range): Promise<HistoryPoint[]
   return fetch(`/api/history?symbol=${encodeURIComponent(symbol)}&range=${range}`).then((r) => json<HistoryPoint[]>(r));
 }
 
-/** 실제 견적. usd 는 주문 금액(팔 때도 USD 금액으로 지정) */
-export function getQuote(symbol: string, side: "buy" | "sell", usd: number): Promise<TradeQuote> {
+/**
+ * 실제 견적(True Markets). 금액을 달러로 주거나 주식 수로 준다.
+ *  - 사기: { usd } = 낼 총액(수수료 포함) / { qty } = 받고 싶은 주식 수
+ *  - 팔기: { qty } = 팔 주식 수 / { usd } = 받고 싶은 금액(현재가로 주식 수 환산)
+ * 결과 TradeQuote.usd 는 살 때 내는 총액, 팔 때 받는 금액(수수료 반영)
+ */
+export function getQuote(symbol: string, side: "buy" | "sell", amount: { usd: number } | { qty: number }): Promise<TradeQuote> {
   return fetch("/api/quote", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ symbol, side, usd }),
+    body: JSON.stringify({ symbol, side, ...amount }),
   }).then((r) => json<TradeQuote>(r));
+}
+
+// ---------- 레버리지 ----------
+/** 레버리지로 거래할 수 있는 종목(18개, 화면 순서대로) */
+export function getPerps(): Promise<PerpMarket[]> {
+  return fetch("/api/perps").then((r) => json<PerpMarket[]>(r));
+}
+
+/** 레버리지 종목 현재가(선물 가격 - 주식 현재가와 조금 다를 수 있음) */
+export function getPerpPrices(symbols: string[]): Promise<Price[]> {
+  if (!symbols.length) return Promise.resolve([]);
+  return fetch(`/api/prices?perp=1&symbols=${encodeURIComponent(symbols.join(","))}`).then((r) => json<Price[]>(r));
+}
+
+export function getPerpHistory(symbol: string, range: Range): Promise<HistoryPoint[]> {
+  return fetch(`/api/history?perp=1&symbol=${encodeURIComponent(symbol)}&range=${range}`).then((r) => json<HistoryPoint[]>(r));
+}
+
+/** 열기 견적. margin = 내가 넣는 돈(USD), leverage = 배율(1~종목 최대) */
+export function getPerpOpenQuote(symbol: string, side: "long" | "short", margin: number, leverage: number): Promise<PerpQuote> {
+  return fetch("/api/perp-quote", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ action: "open", symbol, side, margin, leverage }),
+  }).then((r) => json<PerpQuote>(r));
+}
+
+/** 닫기 견적(포지션 전체) */
+export function getPerpCloseQuote(pos: Position): Promise<PerpCloseQuote> {
+  return fetch("/api/perp-quote", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ action: "close", symbol: pos.symbol, side: pos.side, qty: pos.qty, leverage: pos.leverage }),
+  }).then((r) => json<PerpCloseQuote>(r));
+}
+
+/** 손익(USD). 롱은 오르면 +, 숏은 내리면 + */
+export function positionPnl(pos: Position, price: number) {
+  return (price - pos.entry) * pos.qty * (pos.side === "long" ? 1 : -1);
+}
+
+/** 손익률(넣은 돈 대비). 0.5 = +50% */
+export function positionRoe(pos: Position, price: number) {
+  return positionPnl(pos, price) / pos.margin;
+}
+
+/** 이 가격이면 청산(넣은 돈을 모두 잃음)인가 */
+export function isLiquidated(pos: Position, price: number) {
+  return pos.side === "long" ? price <= pos.liqPrice : price >= pos.liqPrice;
 }
 
 // ---------- 데모 지갑 ----------
 const KEY = "moduwallet.portfolio.v1";
-const START: Portfolio = { usdc: 1000, holdings: [], trades: [] };
+const START: Portfolio = { usdc: 1000, holdings: [], trades: [], positions: [] };
 
 function load(): Portfolio {
   if (typeof window === "undefined") return START;
@@ -75,15 +129,107 @@ export function executeDemo(q: TradeQuote): Trade {
     const next = { symbol: q.symbol, qty, avgPrice: (h.qty * h.avgPrice + q.usd) / qty };
     if (i >= 0) holdings[i] = next;
     else holdings.push(next);
-    save({ usdc: p.usdc - q.usd, holdings, trades: [trade, ...p.trades] });
+    save({ ...p, usdc: p.usdc - q.usd, holdings, trades: [trade, ...p.trades] });
   } else {
     if (i < 0 || holdings[i].qty < q.qty - 1e-9) throw new Error("보유 수량이 부족해요");
     const left = holdings[i].qty - q.qty;
     if (left <= 1e-9) holdings.splice(i, 1);
     else holdings[i] = { ...holdings[i], qty: left };
-    save({ usdc: p.usdc + q.usd, holdings, trades: [trade, ...p.trades] });
+    save({ ...p, usdc: p.usdc + q.usd, holdings, trades: [trade, ...p.trades] });
   }
   return trade;
+}
+
+/** 레버리지 열기(데모). 넣는 돈 + 수수료가 USDC 에서 빠진다 */
+export function openPositionDemo(q: PerpQuote): Position {
+  const p = load();
+  const cost = q.margin + q.fee;
+  if (p.usdc < cost - 1e-9) throw new Error("USDC 잔고가 부족해요");
+  const pos: Position = {
+    id: crypto.randomUUID(),
+    symbol: q.symbol,
+    side: q.side,
+    leverage: q.leverage,
+    margin: q.margin,
+    qty: q.qty,
+    entry: q.price,
+    liqPrice: q.liqPrice,
+    openedAt: new Date().toISOString(),
+    mode: "demo",
+  };
+  const trade: Trade = {
+    id: crypto.randomUUID(),
+    symbol: q.symbol,
+    side: q.side === "long" ? "buy" : "sell",
+    qty: q.qty,
+    price: q.price,
+    usd: cost,
+    fee: q.fee,
+    at: pos.openedAt,
+    mode: "demo",
+    kind: "perp-open",
+    leverage: q.leverage,
+    positionSide: q.side,
+  };
+  save({ ...p, usdc: p.usdc - cost, positions: [pos, ...(p.positions ?? [])], trades: [trade, ...p.trades] });
+  return pos;
+}
+
+/** 레버리지 닫기(데모). 돌려받는 돈 = 넣은 돈 + 손익 - 수수료(0 아래로는 안 감) */
+export function closePositionDemo(positionId: string, q: PerpCloseQuote): Trade {
+  const p = load();
+  const pos = (p.positions ?? []).find((x) => x.id === positionId);
+  if (!pos) throw new Error("이미 닫힌 포지션이에요");
+  const pnl = positionPnl(pos, q.price);
+  const back = Math.max(0, pos.margin + pnl - q.fee);
+  const trade: Trade = {
+    id: crypto.randomUUID(),
+    symbol: pos.symbol,
+    side: pos.side === "long" ? "sell" : "buy",
+    qty: pos.qty,
+    price: q.price,
+    usd: back,
+    fee: q.fee,
+    at: new Date().toISOString(),
+    mode: "demo",
+    kind: "perp-close",
+    leverage: pos.leverage,
+    positionSide: pos.side,
+    pnl: back - pos.margin,
+  };
+  save({ ...p, usdc: p.usdc + back, positions: (p.positions ?? []).filter((x) => x.id !== positionId), trades: [trade, ...p.trades] });
+  return trade;
+}
+
+/**
+ * 현재가로 청산 확인(데모). 청산된 포지션은 넣은 돈을 모두 잃고 닫힌다.
+ * 화면에서 레버리지 가격을 받을 때마다 부른다. 청산된 것을 돌려준다(알림용)
+ */
+export function checkLiquidationsDemo(prices: Price[]): Position[] {
+  const p = load();
+  const dead = (p.positions ?? []).filter((pos) => {
+    const pr = prices.find((x) => x.symbol === pos.symbol);
+    return pr ? isLiquidated(pos, pr.price) : false;
+  });
+  if (!dead.length) return [];
+  const now = new Date().toISOString();
+  const trades: Trade[] = dead.map((pos) => ({
+    id: crypto.randomUUID(),
+    symbol: pos.symbol,
+    side: pos.side === "long" ? "sell" : "buy",
+    qty: pos.qty,
+    price: pos.liqPrice,
+    usd: 0,
+    fee: 0,
+    at: now,
+    mode: "demo",
+    kind: "perp-liquidated",
+    leverage: pos.leverage,
+    positionSide: pos.side,
+    pnl: -pos.margin,
+  }));
+  save({ ...p, positions: (p.positions ?? []).filter((x) => !dead.includes(x)), trades: [...trades, ...p.trades] });
+  return dead;
 }
 
 export function resetDemo() {

@@ -13,9 +13,10 @@ type Props = {
   color: string; // 선 색(오르면 빨강, 내리면 파랑)
   onScrub?: (p: HistoryPoint | null) => void;
   label: string;
+  height?: number;
 };
 
-export function Chart({ points, color, onScrub, label }: Props) {
+export function Chart({ points, color, onScrub, label, height = 200 }: Props) {
   const box = useRef<HTMLDivElement>(null);
   const [active, setActive] = useState<number | null>(null);
 
@@ -57,7 +58,8 @@ export function Chart({ points, color, onScrub, label }: Props) {
       ref={box}
       role="img"
       aria-label={label}
-      className="relative h-[200px] w-full cursor-crosshair touch-pan-y select-none"
+      className="relative w-full cursor-crosshair touch-pan-y select-none"
+      style={{ height }}
       onPointerDown={(e) => {
         e.currentTarget.setPointerCapture(e.pointerId);
         pick(e.clientX);

@@ -29,7 +29,7 @@ export type TradeQuote = {
   price: number; // 1주당 체결 예상가
   fee: number; // 수수료(USD)
   expiresAt: string; // 견적 만료 시각(약 2분)
-  source: "truemarkets" | "estimate"; // estimate = 실견적 실패 시 현재가로 계산
+  source: "truemarkets" | "estimate"; // estimate = True Markets 견적 실패 시 현재가로 계산
 };
 
 export type Trade = {
@@ -42,6 +42,11 @@ export type Trade = {
   fee: number;
   at: string; // ISO
   mode: "demo" | "live";
+  // 레버리지 거래일 때만
+  kind?: "spot" | "perp-open" | "perp-close" | "perp-liquidated";
+  leverage?: number;
+  positionSide?: "long" | "short";
+  pnl?: number; // 닫을 때 손익(USD)
 };
 
 export type Holding = { symbol: string; qty: number; avgPrice: number };
@@ -51,4 +56,58 @@ export type Portfolio = {
   usdc: number;
   holdings: Holding[];
   trades: Trade[];
+  positions?: Position[]; // 레버리지 포지션(옛 저장본에는 없을 수 있음)
+};
+
+// ---------- 레버리지(무기한 선물) ----------
+export type PerpGroup = "stock" | "index" | "commodity" | "crypto";
+
+/** 레버리지로 거래할 수 있는 종목 */
+export type PerpMarket = {
+  symbol: string; // NVDA, SP500, CL ...
+  name: string; // 영어 이름
+  nameKo: string; // 엔비디아, S&P 500, 원유(WTI) ...
+  icon?: string;
+  group: PerpGroup;
+  maxLeverage: number; // 이 종목의 최대 배율
+  fundingRate: number; // 1시간 펀딩비(+면 롱이 숏에게 냄)
+};
+
+/** 레버리지 열기 견적(True Markets /quotes) */
+export type PerpQuote = {
+  symbol: string;
+  side: "long" | "short"; // long = 오를 것 같아요, short = 내릴 것 같아요
+  leverage: number;
+  margin: number; // 내가 넣는 돈(USD)
+  qty: number; // 포지션 크기(주·개)
+  price: number; // 진입 예상가
+  notional: number; // 포지션 금액 = margin × leverage (대략)
+  fee: number; // 여는 수수료(USD), margin 과 별도로 낸다
+  liqPrice: number; // 예상 청산가 - 여기까지 가면 넣은 돈을 모두 잃어요
+  expiresAt: string;
+  source: "truemarkets" | "estimate";
+};
+
+/** 레버리지 닫기 견적 */
+export type PerpCloseQuote = {
+  symbol: string;
+  qty: number;
+  price: number; // 닫는 예상가
+  fee: number;
+  expiresAt: string;
+  source: "truemarkets" | "estimate";
+};
+
+/** 열려 있는 레버리지 포지션(데모: localStorage) */
+export type Position = {
+  id: string;
+  symbol: string;
+  side: "long" | "short";
+  leverage: number;
+  margin: number;
+  qty: number;
+  entry: number;
+  liqPrice: number;
+  openedAt: string;
+  mode: "demo" | "live";
 };

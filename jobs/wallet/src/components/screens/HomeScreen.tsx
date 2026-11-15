@@ -1,13 +1,15 @@
 "use client";
-// 홈(지갑): 총액 · 오늘 변화 · 빠른 동작 · 보유 자산 · 둘러보기
+// 홈(지갑): 총액 · 오늘 변화 · 빠른 동작 · 보유 자산 · 레버리지 · 둘러보기
 import Link from "next/link";
 import { useMemo, useState, type ReactNode } from "react";
-import { usePortfolio } from "@/lib/client";
+import { positionPnl, usePortfolio } from "@/lib/client";
 import { DemoBadge } from "../DemoBadge";
 import { fmtPct, fmtQty, fmtSignedUsd, fmtUsd, stockHref, toneArrow, toneOf, toneText } from "../format";
 import { IconBag, IconChevron, IconPlus, IconSend } from "../icons";
 import { Wordmark } from "../Logo";
 import { usePrices, useStocks } from "../market";
+import { positionValue, usePerpPrices, usePerps } from "../perp";
+import { LiquidationToast, PositionList } from "../Positions";
 import { Sheet } from "../Sheet";
 import { TabBar } from "../TabBar";
 import {
@@ -44,7 +46,21 @@ export function HomeScreen() {
   );
   const { prices, loading: pricesLoading, error: pricesError, reload: reloadPrices } = usePrices(symbols);
 
-  // 총액 = USDC + 보유 주식 × 현재가. 시세를 못 받은 종목은 산 가격으로 계산한다.
+  // 레버리지: 진행 중인 것이 있을 때만 가격을 받는다(15초마다, 청산 확인 포함)
+  const perps = usePerps();
+  const positions = useMemo(() => pf.positions ?? [], [pf.positions]);
+  const perpSymbols = useMemo(() => positions.map((p) => p.symbol), [positions]);
+  const { prices: perpPrices, loading: perpLoading } = usePerpPrices(perpSymbols);
+  const hasPositions = positions.length > 0;
+  let levValue = 0; // 넣은 돈 + 손익
+  let levPnl = 0;
+  for (const pos of positions) {
+    const pp = perpPrices[pos.symbol]?.price;
+    levValue += positionValue(pos, pp);
+    if (pp) levPnl += Math.max(-pos.margin, positionPnl(pos, pp));
+  }
+
+  // 총액 = USDC + 보유 주식 × 현재가 + 레버리지(넣은 돈 + 손익). 시세를 못 받은 종목은 산 가격으로 계산한다.
   const hasHoldings = pf.holdings.length > 0;
   const missing = pf.holdings.some((h) => !prices[h.symbol]);
   let stockValue = 0;
@@ -55,15 +71,19 @@ export function HomeScreen() {
     stockValue += h.qty * now;
     if (p) dayChange += h.qty * (p.price - p.price / (1 + p.change24h));
   }
-  const total = pf.usdc + stockValue;
+  const total = pf.usdc + stockValue + levValue;
   const dayBase = stockValue - dayChange;
   const dayRatio = dayBase > 0 ? dayChange / dayBase : 0;
   const dayTone = toneOf(dayChange, 0.005);
-  const totalLoading = hasHoldings && missing && pricesLoading;
+  const totalLoading =
+    (hasHoldings && missing && pricesLoading) || (hasPositions && perpLoading && positions.some((p) => !perpPrices[p.symbol]));
   const stockShare = total > 0 ? stockValue / total : 0;
+  const levShare = total > 0 ? levValue / total : 0;
+  const levTone = toneOf(levPnl, 0.005);
 
   return (
     <Screen tabbar>
+      <LiquidationToast markets={perps.data} />
       <header className="flex h-14 items-center justify-between px-5">
         <h1>
           <Wordmark />
@@ -98,6 +118,11 @@ export function HomeScreen() {
                       {fmtSignedUsd(dayChange)} ({fmtPct(dayRatio)})
                     </span>
                   </>
+                ) : hasPositions ? (
+                  <>
+                    <span className="text-mute">레버리지 손익 </span>
+                    <span className={`tabular-nums ${toneText[levTone]}`}>{fmtSignedUsd(levPnl)}</span>
+                  </>
                 ) : (
                   <span className="text-mute">아직 가진 주식이 없어요</span>
                 )}
@@ -105,21 +130,30 @@ export function HomeScreen() {
             </>
           )}
 
-          {hasHoldings && !totalLoading && (
+          {(hasHoldings || hasPositions) && !totalLoading && (
             <div className="mt-5">
               <div
                 className="flex h-2 gap-0.5 overflow-hidden rounded-full"
                 role="img"
-                aria-label={`주식 ${Math.round(stockShare * 100)}%, 달러 ${100 - Math.round(stockShare * 100)}%`}
+                aria-label={`주식 ${Math.round(stockShare * 100)}%, 레버리지 ${Math.round(levShare * 100)}%, 나머지는 달러`}
               >
-                <span className="rounded-full bg-primary" style={{ width: `${stockShare * 100}%` }} />
+                {stockShare > 0 && <span className="rounded-full bg-primary" style={{ width: `${stockShare * 100}%` }} />}
+                {levShare > 0 && <span className="rounded-full bg-violet" style={{ width: `${levShare * 100}%` }} />}
                 <span className="flex-1 rounded-full bg-fill-strong" />
               </div>
-              <div className="mt-2 flex justify-between text-[13px] text-mute">
-                <span className="flex items-center gap-1.5">
-                  <i className="h-2 w-2 rounded-full bg-primary" aria-hidden="true" />
-                  주식 <b className="font-semibold tabular-nums text-sub">{fmtUsd(stockValue)}</b>
-                </span>
+              <div className="mt-2 flex flex-wrap justify-between gap-x-3 gap-y-1 text-[13px] text-mute">
+                {(hasHoldings || !hasPositions) && (
+                  <span className="flex items-center gap-1.5">
+                    <i className="h-2 w-2 rounded-full bg-primary" aria-hidden="true" />
+                    주식 <b className="font-semibold tabular-nums text-sub">{fmtUsd(stockValue)}</b>
+                  </span>
+                )}
+                {hasPositions && (
+                  <span className="flex items-center gap-1.5">
+                    <i className="h-2 w-2 rounded-full bg-violet" aria-hidden="true" />
+                    레버리지 <b className="font-semibold tabular-nums text-sub">{fmtUsd(levValue)}</b>
+                  </span>
+                )}
                 <span className="flex items-center gap-1.5">
                   <i className="h-2 w-2 rounded-full bg-fill-strong" aria-hidden="true" />
                   달러 <b className="font-semibold tabular-nums text-sub">{fmtUsd(pf.usdc)}</b>
@@ -211,6 +245,25 @@ export function HomeScreen() {
           )}
         </Card>
 
+        {/* 레버리지(진행 중인 것이 있을 때만 보임) */}
+        <PositionList
+          positions={positions}
+          markets={perps.data}
+          prices={perpPrices}
+          loading={perpLoading}
+          header={
+            <div className="flex items-center justify-between pl-1">
+              <h2 className="text-[15px] font-bold text-sub">
+                레버리지 <span className="tabular-nums text-primary">{positions.length}</span>
+              </h2>
+              <Link href="/leverage" className="press flex h-11 items-center gap-0.5 px-2 text-[14px] font-semibold text-mute">
+                전체 보기
+                <IconChevron size={16} />
+              </Link>
+            </div>
+          }
+        />
+
         {/* 둘러보기 */}
         <Card className="pb-2 pt-5">
           <div className="flex items-center justify-between pl-5 pr-2">
@@ -245,7 +298,8 @@ export function HomeScreen() {
         </Card>
 
         <p className="px-2 pb-2 pt-1 text-[12px] leading-relaxed text-hint">
-          시세·견적 제공: True Markets. 토큰화 주식은 실제 주식이 아닌 증서이며 원금을 잃을 수 있어요. 이 화면은
+          시세·견적 제공: True Markets. 토큰화 주식은 실제 주식이 아닌 증서이며 원금을 잃을 수 있어요. 레버리지는 넣은
+          돈을 모두 잃을 수 있어요. 이 화면은
           데모이고 투자 권유가 아니에요.
         </p>
       </main>
