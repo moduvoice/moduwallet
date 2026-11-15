@@ -1,0 +1,17 @@
+[
+ ["01_intro", "This is moduwallet: a simple, clean wallet for U.S. stocks, built on the True Markets Gateway API."],
+ ["02_home", "Your balance, today's change, and everything you own, on one calm screen."],
+ ["03_search", "Search more than ninety tokenized stocks and ETFs, like Nvidia, Tesla, or the S and P five hundred, plus Bitcoin and Ethereum."],
+ ["04_detail", "Prices and charts come live from True Markets market data."],
+ ["05_buy", "Buying is a single sheet. Type a dollar amount, or switch to shares."],
+ ["06_quote", "You get a real-time True Markets quote, with the fee and the price spread explained in plain words."],
+ ["07_done", "Confirm, and it is in your wallet."],
+ ["08_lev", "Leverage is usually confusing. We turned it into a few simple questions."],
+ ["09_dir", "First: do you think it will go up, or down?"],
+ ["10_mult", "Then pick a multiplier, and see exactly what it means. One percent up is five percent for you, and you see how far a drop would wipe out your money."],
+ ["11_open", "A short scenario table and a one time risk check, and your position is open."],
+ ["12_pos", "Track your profit, and how close you are to liquidation, at a glance. Close it with one tap."],
+ ["13_hist", "History shows realized profit, loss, and fees."],
+ ["14_lang", "And moduwallet speaks your language: English, Korean, Chinese, Thai, Vietnamese, and Russian."],
+ ["15_outro", "This demo uses real True Markets quotes with simulated fills. moduwallet. Easy stocks, for everyone."]
+]

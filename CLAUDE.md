@@ -18,6 +18,11 @@ DevSpot의 True Markets Gateway API 해커톤(4주, 1등 $1,000) 참가 프로�
     앱 지역 eastasia(SWA 는 한국 리전 없음). 주소 https://agreeable-grass-01185c300.3.azurestaticapps.net
     main 에 push 하면 `.github/workflows/azure-static-web-apps-*.yml` 이 자동 배포. 키 3개는 SWA 앱 설정에 있음
     Node 는 22.x 고정(SWA 는 18·20·22 만, 24 는 실패). next.config `output: "standalone"`
+  - 견적은 `POST /v1/gateway/quotes`(잔고 없이 사기·팔기·레버리지 모두). 사기는 qty_unit=quote 만, 팔기는 base 만 받는다. 가끔 503 → 한 번 재시도
+  - 레버리지: `src/lib/server/perp.ts`(18종목 고정 목록, 청산가는 유지율 1/(2×최대배율) 근사, 최소 포지션 $10)
+  - 다국어: `src/i18n/{ko,en,zh,th,vi,ru}.ts`(ko 가 기준), 기본 = 브라우저 언어 → 영어
+  - UAT(모의 체결) 키는 아직 없음 - 지금 키로 api.uat 는 invalid api key. 받으면 TRUEMARKETS_API 로 바꾼다
+- 데모 영상: `etc/video/`(record.py 녹화 → compose.py 합치기, 내레이션 moduvoice 관리자 API 의 `ethan` 영어 음성). 결과 `tmp/video/moduwallet-demo.mp4`
   - 시세 API 는 gateway asset 의 `economic_asset_id` 로 부른다(`id` 는 404)
 - 샌드박스가 없어 모든 주문이 실제 온체인 거래다. 주문 코드는 소액으로만 시험한다.
 - API 키·signer 키는 `D:\credentials.env` 에만 둔다(커밋 금지).
