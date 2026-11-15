@@ -1,49 +1,39 @@
-# 구상 (2026-11-15)
+# 구상 (2026-11-15, 단순화판)
 
 ## 한 줄
-Polymarket 확률로 판단하는 여러 스타일의 주식 봇을 리더보드에서 고르고, 한 번 눌러 내 지갑으로 투자를 시작하는 지갑 앱.
-겉은 지갑, 속(체결)은 True Markets.
+단순한 지갑. 예측 확률이 움직이면 그에 맞는 True Markets 주식 매매를 해 주는 "신호"를 골라 따라간다.
+해커톤 제출용 웹 데모만 만든다(앱스토어·실서비스 없음).
 
-## 사업 논리 (발표에 쓸 것)
-- Polymarket과 True Markets는 경쟁 관계가 아님
-- True Markets는 후발주자. 경쟁자는 이미 MetaMask 같은 지갑 안에 들어가 있음
-- 그래서 사람을 모으는 건 이미 유명한 Polymarket(확률 데이터·브랜드), 돈이 되는 체결은 True Markets
-- True Markets 입장: 우리 앱의 모든 매매 = True Markets 거래 수수료
+## 넣는 것 / 안 넣는 것
+- 넣음: 지갑(잔고·보유 주식), 신호 목록, 신호 따라하기, True Markets 견적·체결(데모는 견적까지 실제)
+- 안 넣음: Polymarket 거래·예측 카드 화면, 자체 시드 지갑, 봇 여러 개·리더보드, 회원가입
+- Polymarket 은 화면에 확률 숫자와 출처로만 보임(공개 데이터, 키 없음)
 
-## 봇 (모두 Polymarket 확률이 판단 근거, 체결은 True Markets 토큰화 주식·코인)
-| 봇 | 보는 시장 | 행동 |
-|---|---|---|
-| 거시(Macro) | 연준 금리, 경기침체 확률 | 성장주/방어 비중 조절 |
-| 실적(Earnings) | 기업 실적·이벤트 확률 | 해당 종목 매수/매도 |
-| 정책(Policy) | 관세·규제·선거 확률 | 영향 업종 조절 |
-| 확률 모멘텀 | 확률이 빠르게 바뀌는 시장 | 변화 방향으로 따라감 |
-| 역발상(Contrarian) | 확률이 극단(90%+)인 시장 | 반대로 소량 |
-| 크립토 | BTC·ETH 가격 예측 시장 | 코인 비중 조절 |
-- 위험도(보수/보통/공격)를 함께 표시
-- 리더보드: Polymarket 과거 확률(prices-history) + True Markets 과거 시세(Market data)로 백테스트, 이후 모의 매매 성적 누적
+## 신호 = (예측 시장 하나) + (연결 종목) + (규칙)
+| 신호 | 예측 시장(예) | 연결 종목 | 규칙 |
+|---|---|---|---|
+| 실적 기대 | Will Nvidia beat quarterly earnings? (현재 92%) | NVDA | 85% 넘으면 매수, 발표 후 매도 |
+| 금리 | Fed Decision in December / How many cuts | QQQ, SPY | 인하 확률이 오르면 매수, 내리면 줄임 |
+| 1등 기업 | Largest company end of December | NVDA, MSFT, AAPL… | 확률 1위 종목 보유 |
+| 주가 목표 | What will NVDA hit in November? | NVDA | 상승 목표 확률 상승 시 매수 |
+- 각 신호 카드: 지금 확률, 지난 30일 확률 그래프, 같은 기간 이 규칙을 따랐을 때 수익(True Markets 시세로 계산)
 
-## 사용 흐름
-홈(내 자산) → 리더보드 → 봇 상세(성적·근거·지금 보고 있는 확률) → [투자 시작] → 경고문 확인 → 금액·한도 정하기 → 승인 → 봇이 한도 안에서 매매 → 매매마다 "왜"를 한 줄로 알림
+## 화면 (3개)
+1. 지갑: 총액, 보유 종목, 따라가는 신호
+2. 신호 목록 → 신호 상세(확률·연결 종목·30일 성적)
+3. 따라하기 시트: 경고문 → 금액 → [따라하기] → True Markets 견적 표시 → 데모 체결
 
-## MetaMask 모바일 분석 (스크린샷 etc/ref/metamask/, 2026-11-15, 공개 저장소에 안 올림)
-- 하단 탭 5개: 홈 / 둘러보기 / (+) 거래하기 / 머니 / 보상. 다크 배경, 흰 알약 버튼, 라임색 상승·분홍 하락
-- 홈: 시작하기 진행바 → 토큰(구매 버튼) → 무기한 선물 카드 → **예측(Polymarket)** → 관심 목록 → **상위 트레이더(팔로우)**
-- 둘러보기 탭: 지금 / 거시 경제 / 실물연계자산 / 암호화폐 / 스포츠 / 사이트
-  - 거시 경제 탭에 예측(프랑스 대선 Yes/No)과 **주식 무기한 선물(NVDA 20x)**이 한 화면에 같이 있음
-  - 사이트에 **Ondo Global Markets**(토큰화 주식) → True Markets의 직접 경쟁자가 이미 MetaMask 안에 있음
-- 머니: mUSD 예치 5.6% APY. 보상: 포인트 프로그램
-- 시사점
-  - MetaMask는 예측·주식·트레이더 팔로우를 **따로따로** 보여줄 뿐, 예측 확률과 주식 매매를 잇지 않음
-    → 우리 차별점: "확률이 움직이면 주식 행동으로 바꿔 주는 봇", "사람 대신 봇을 팔로우"
-  - 화면 문법(탭 구조·카드·Yes/No 알약)은 참고, 색·로고·문구는 우리 것으로
+## 서명
+- True Markets 는 서명 키에 한도·정책 기능이 없음(문서 Wallet control). 키 보관 방식은 사용자별로
+  "서버가 보관" / "사용자 기기가 보관" 중 고름
+- 데모: 사용자별 키를 서버가 보관 → 신호가 조건을 넘으면 서버가 자동 주문. 한도(금액)는 우리 서버가 지킴
+- 발표: "실서비스에선 사용자 기기 키로 바꾸고, 신호가 오면 알림 → 한 번 눌러 승인"이라고 설명
 
-## moduwallet 화면 초안
-- 하단 탭: 홈 / 봇(리더보드) / (+) 투자 / 신호(Polymarket 확률) / 내 활동
-- 홈: 총자산, 돌고 있는 봇, 오늘의 큰 확률 변화 → 봇 행동
-- 봇 상세: 성적 차트, 따르는 확률 시장 카드(Yes %), 최근 매매와 이유
-- 투자 시트: 경고문 → 금액·한도 → 승인(Face ID/패스키)
-
-## 확인할 것
-- [ ] "한 번 누르면 봇이 알아서 매매"와 비수탁의 양립: 사용자별 signer 키 + 한도(정책)를 걸 수 있는지 (Gateway Wallet control, Turnkey 정책)
-- [ ] Polymarket prices-history 로 과거 확률을 얼마나 길게 받을 수 있는지
-- [ ] True Markets Market data 과거 캔들 기간
+## 데이터 (2026-11-15 확인)
+- True Markets 시세: `GET /v1/defi/market/prices/history?asset_id=<economic_asset_id>&window=12M&resolution=1d`
+  - asset_id 는 gateway assets 의 `id` 가 아니라 `economic_asset_id`. window `1y` 는 400, `12M` · `365d` 는 됨
+  - NVDA 일봉은 2026-07-03 부터(약 4.5개월). 응답 `points[{t, price}]`
+- Polymarket: gamma-api `/events?tag_slug=economy|earnings|stocks` → `markets[].clobTokenIds`
+  → clob `/prices-history?market=<token>&interval=max&fidelity=60`
+  - interval=max 로 최근 약 1개월(시간 단위)만 옴. 실적 시장은 발표 2주 전쯤 열림
+- 견적: 잔고 없이 주문 생성하면 quote(qty_out·fee) 옴. 수수료 0.2%
