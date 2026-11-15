@@ -91,11 +91,36 @@ export function isLiquidated(pos: Position, price: number) {
 const KEY = "moduwallet.portfolio.v1";
 const START: Portfolio = { usdc: 1000, holdings: [], trades: [], positions: [] };
 
+const num = (v: unknown, min = 0, max = 1e9) => (typeof v === "number" && Number.isFinite(v) && v >= min && v <= max ? v : null);
+
+/** 저장값을 검사해서 이상한 항목은 버린다. 전체가 깨졌으면 처음 상태로 */
+function sanitize(raw: unknown): Portfolio {
+  if (!raw || typeof raw !== "object") return START;
+  const r = raw as Record<string, unknown>;
+  const usdc = num(r.usdc);
+  if (usdc === null) return START;
+  const arr = (v: unknown) => (Array.isArray(v) ? v : []);
+  const holdings = arr(r.holdings).filter(
+    (h): h is Portfolio["holdings"][number] =>
+      !!h && typeof h.symbol === "string" && num(h.qty, 1e-12) !== null && num(h.avgPrice) !== null,
+  );
+  const trades = arr(r.trades).filter(
+    (t): t is Trade => !!t && typeof t.symbol === "string" && typeof t.at === "string" && num(t.qty) !== null && num(t.usd, -1e9) !== null,
+  );
+  const positions = arr(r.positions).filter(
+    (x): x is Position =>
+      !!x && typeof x.symbol === "string" && (x.side === "long" || x.side === "short") &&
+      num(x.margin, 1e-9) !== null && num(x.qty, 1e-12) !== null && num(x.entry, 1e-12) !== null &&
+      num(x.leverage, 1, 100) !== null && num(x.liqPrice) !== null,
+  );
+  return { usdc, holdings, trades, positions };
+}
+
 function load(): Portfolio {
   if (typeof window === "undefined") return START;
   try {
     const raw = localStorage.getItem(KEY);
-    return raw ? (JSON.parse(raw) as Portfolio) : START;
+    return raw ? sanitize(JSON.parse(raw)) : START;
   } catch {
     return START;
   }
@@ -126,12 +151,13 @@ export function executeDemo(q: TradeQuote): Trade {
     if (p.usdc < q.usd) throw new Error("USDC 잔고가 부족해요");
     const h = i >= 0 ? holdings[i] : { symbol: q.symbol, qty: 0, avgPrice: 0 };
     const qty = h.qty + q.qty;
-    const next = { symbol: q.symbol, qty, avgPrice: (h.qty * h.avgPrice + q.usd) / qty };
+    const next = { symbol: q.symbol, qty, avgPrice: (h.qty * h.avgPrice + q.usd) / qty, lastBuyAt: trade.at };
     if (i >= 0) holdings[i] = next;
     else holdings.push(next);
     save({ ...p, usdc: p.usdc - q.usd, holdings, trades: [trade, ...p.trades] });
   } else {
     if (i < 0 || holdings[i].qty < q.qty - 1e-9) throw new Error("보유 수량이 부족해요");
+    trade.pnl = q.usd - q.qty * holdings[i].avgPrice; // 실현 손익(받은 돈 - 산 값)
     const left = holdings[i].qty - q.qty;
     if (left <= 1e-9) holdings.splice(i, 1);
     else holdings[i] = { ...holdings[i], qty: left };
@@ -154,6 +180,7 @@ export function openPositionDemo(q: PerpQuote): Position {
     qty: q.qty,
     entry: q.price,
     liqPrice: q.liqPrice,
+    openFee: q.fee,
     openedAt: new Date().toISOString(),
     mode: "demo",
   };
@@ -195,7 +222,7 @@ export function closePositionDemo(positionId: string, q: PerpCloseQuote): Trade 
     kind: "perp-close",
     leverage: pos.leverage,
     positionSide: pos.side,
-    pnl: back - pos.margin,
+    pnl: back - pos.margin - (pos.openFee ?? 0), // 여는 수수료까지 포함한 실제 손익
   };
   save({ ...p, usdc: p.usdc + back, positions: (p.positions ?? []).filter((x) => x.id !== positionId), trades: [trade, ...p.trades] });
   return trade;
@@ -226,7 +253,7 @@ export function checkLiquidationsDemo(prices: Price[]): Position[] {
     kind: "perp-liquidated",
     leverage: pos.leverage,
     positionSide: pos.side,
-    pnl: -pos.margin,
+    pnl: -pos.margin - (pos.openFee ?? 0),
   }));
   save({ ...p, positions: (p.positions ?? []).filter((x) => !dead.includes(x)), trades: [...trades, ...p.trades] });
   return dead;
@@ -282,4 +309,67 @@ export function useAsync<T>(fn: () => Promise<T>, deps: unknown[]) {
     loading: stale || !state.done,
     reload,
   };
+}
+
+
+// ---------- 화면 도우미 ----------
+/**
+ * 오늘 손익(주식·코인 보유분). 오늘(24시간 안에) 산 것은 산 가격부터, 그 전에 산 것은 24시간 전 가격부터 계산한다.
+ * prices 에 없는 종목은 0 으로 본다.
+ */
+export function todayChange(p: Portfolio, prices: Price[]) {
+  const dayAgo = Date.now() - 24 * 3600_000;
+  let change = 0;
+  let base = 0;
+  for (const h of p.holdings) {
+    const pr = prices.find((x) => x.symbol === h.symbol);
+    if (!pr) continue;
+    const prev = pr.price / (1 + pr.change24h);
+    const boughtToday = h.lastBuyAt ? Date.parse(h.lastBuyAt) > dayAgo : false;
+    const from = boughtToday ? h.avgPrice : prev;
+    change += h.qty * (pr.price - from);
+    base += h.qty * from;
+  }
+  return { change, ratio: base > 0 ? change / base : 0 };
+}
+
+/**
+ * 미국 주식 시장 상태(정규장 월~금 9:30~16:00 뉴욕 시간, 공휴일은 따지지 않음).
+ * 토큰은 장이 닫혀도 거래될 수 있지만 가격이 덜 움직이고 사고팔 때 가격 차이가 커질 수 있다.
+ */
+export function usMarketStatus(now = new Date()): { open: boolean; label: string } {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    weekday: "short",
+    hour: "numeric",
+    minute: "numeric",
+    hour12: false,
+  }).formatToParts(now);
+  const get = (t: string) => parts.find((x) => x.type === t)?.value ?? "";
+  const wd = get("weekday");
+  const mins = (Number(get("hour")) % 24) * 60 + Number(get("minute"));
+  const weekend = wd === "Sat" || wd === "Sun";
+  const open = !weekend && mins >= 570 && mins < 960;
+  return { open, label: open ? "미국 장 열림" : weekend ? "주말 · 미국 장 닫힘" : "미국 장 닫힘" };
+}
+
+/** 1달러가 각 통화로 얼마인지(참고용, 1시간마다 갱신). rates: { KRW, VND, THB, CNY, RUB, JPY, EUR } */
+export function getFx(): Promise<{ rates: Record<string, number>; usdKrw: number; updatedAt: string }> {
+  return fetch("/api/fx").then((r) => json<{ rates: Record<string, number>; usdKrw: number; updatedAt: string }>(r));
+}
+
+/** 브라우저가 인터넷에 연결돼 있는지 */
+export function useOnline() {
+  const [online, setOnline] = useState(true);
+  useEffect(() => {
+    const update = () => setOnline(navigator.onLine);
+    update();
+    window.addEventListener("online", update);
+    window.addEventListener("offline", update);
+    return () => {
+      window.removeEventListener("online", update);
+      window.removeEventListener("offline", update);
+    };
+  }, []);
+  return online;
 }

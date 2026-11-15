@@ -1,7 +1,9 @@
 "use client";
 // 레버리지 화면들이 같이 쓰는 데이터 훅과 계산. 데이터는 전부 src/lib/client.ts 의 함수로만 받는다.
+// (청산 확인은 layout 의 LiquidationWatcher 가 어느 화면에서든 한다)
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
-import { checkLiquidationsDemo, getPerpPrices, getPerps, positionPnl, useAsync } from "@/lib/client";
+import type { Key } from "@/i18n";
+import { getPerpPrices, getPerps, positionPnl, useAsync } from "@/lib/client";
 import type { PerpMarket, Position, Price } from "@/lib/types";
 
 // ---------- 종목 목록 ----------
@@ -22,12 +24,10 @@ export function usePerps() {
   return useAsync(loadPerps, []);
 }
 
-// ---------- 현재가(선물 가격) + 청산 확인 ----------
+// ---------- 현재가(선물 가격) ----------
 type PriceMap = Record<string, Price>;
 const EMPTY: PriceMap = {};
-const NONE: Position[] = [];
 let snapshot: PriceMap = EMPTY;
-let liquidated: Position[] = NONE; // 방금 청산된 것(알림용)
 const listeners = new Set<() => void>();
 
 function subscribe(fn: () => void) {
@@ -37,23 +37,18 @@ function subscribe(fn: () => void) {
   };
 }
 
-const emit = () => listeners.forEach((fn) => fn());
-
 function accept(list: Price[]) {
   const good = list.filter((p) => p && typeof p.price === "number" && Number.isFinite(p.price) && p.price > 0);
   if (!good.length) return;
   const next = { ...snapshot };
   for (const p of good) next[p.symbol] = p;
   snapshot = next;
-  // 가격을 받을 때마다 청산 확인(데모). 청산된 포지션은 지갑에서 빠지고 알림으로 보여 준다
-  const dead = checkLiquidationsDemo(good);
-  if (dead.length) liquidated = [...liquidated, ...dead];
-  emit();
+  listeners.forEach((fn) => fn());
 }
 
 const REFRESH_MS = 15_000;
 
-/** 레버리지 종목 현재가. 15초마다(화면이 보일 때만) 새로 받고, 받을 때마다 청산을 확인한다 */
+/** 레버리지 종목 현재가. 15초마다(화면이 보일 때만) 새로 받는다 */
 export function usePerpPrices(symbols: string[]) {
   const prices = useSyncExternalStore(
     subscribe,
@@ -98,27 +93,34 @@ export function usePerpPrices(symbols: string[]) {
   };
 }
 
-/** 방금 청산된 포지션(알림용) */
-export function useLiquidated(): Position[] {
-  return useSyncExternalStore(
-    subscribe,
-    () => liquidated,
-    () => NONE,
-  );
-}
-
-export function clearLiquidated() {
-  if (!liquidated.length) return;
-  liquidated = NONE;
-  emit();
-}
-
 // ---------- 쉬운 말 · 계산 ----------
 export type PerpSide = "long" | "short";
 
-export const SIDE: Record<PerpSide, { guess: string; dir: string; word: string; text: string; soft: string; bg: string; hex: string }> = {
-  long: { guess: "오를 것 같아요", dir: "오르는 쪽", word: "롱", text: "text-up", soft: "bg-up-soft", bg: "bg-up active:bg-up-press", hex: "#F04452" },
-  short: { guess: "내릴 것 같아요", dir: "내리는 쪽", word: "숏", text: "text-down", soft: "bg-down-soft", bg: "bg-primary active:bg-primary-press", hex: "#3182F6" },
+/** 방향별 글자 키와 색. long = 오르는 쪽(up 색), short = 내리는 쪽(down 색) */
+export const SIDE: Record<
+  PerpSide,
+  { guess: Key; sub: Key; dir: Key; word: Key; text: string; soft: string; bg: string; tone: "up" | "down" }
+> = {
+  long: {
+    guess: "side.long.guess",
+    sub: "side.long.sub",
+    dir: "side.long.dir",
+    word: "side.long.word",
+    text: "text-up",
+    soft: "bg-up-soft",
+    bg: "bg-up active:bg-up-press",
+    tone: "up",
+  },
+  short: {
+    guess: "side.short.guess",
+    sub: "side.short.sub",
+    dir: "side.short.dir",
+    word: "side.short.word",
+    text: "text-down",
+    soft: "bg-down-soft",
+    bg: "bg-down active:bg-down-press",
+    tone: "down",
+  },
 };
 
 /** 17.5% / 20% / 2.5% 처럼 짧게(부호 없음) */
@@ -136,13 +138,19 @@ export function estLiqDistance(leverage: number, maxLeverage: number): number {
   return Math.max(0.002, 1 / leverage - 1 / (2 * maxLeverage));
 }
 
-export type Risk = { label: string; text: string; bg: string };
+/** 거래소 최소 주문: 움직이는 금액(넣는 돈 × 배수)이 $10 이상 → 넣는 돈 최소값 */
+export const MIN_NOTIONAL = 10;
+export function minMargin(leverage: number): number {
+  return Math.max(1, Math.ceil(MIN_NOTIONAL / leverage));
+}
+
+export type Risk = { label: Key; text: string; bg: string };
 
 /** 배수별 위험도(쉬운 말 + 색) */
 export function riskOf(leverage: number): Risk {
-  if (leverage <= 3) return { label: "위험 낮음", text: "text-ok", bg: "bg-ok-soft" };
-  if (leverage <= 10) return { label: "위험 보통", text: "text-warn", bg: "bg-warn-soft" };
-  return { label: "위험 높음", text: "text-up", bg: "bg-up-soft" };
+  if (leverage <= 3) return { label: "risk.low", text: "text-ok", bg: "bg-ok-soft" };
+  if (leverage <= 10) return { label: "risk.mid", text: "text-warn", bg: "bg-warn-soft" };
+  return { label: "risk.high", text: "text-danger", bg: "bg-danger-soft" };
 }
 
 /** 지금 가격에서 청산가까지 남은 거리(가격 변동률). 0 이하면 청산 */
@@ -156,8 +164,8 @@ export function positionValue(pos: Position, price?: number): number {
   return Math.max(0, pos.margin + (price ? positionPnl(pos, price) : 0));
 }
 
-export const GROUPS: { key: string; label: string; has: (m: PerpMarket) => boolean }[] = [
-  { key: "stock", label: "주식", has: (m) => m.group === "stock" },
-  { key: "macro", label: "지수 · 원자재", has: (m) => m.group === "index" || m.group === "commodity" },
-  { key: "crypto", label: "코인", has: (m) => m.group === "crypto" },
+export const GROUPS: { key: string; label: Key; has: (m: PerpMarket) => boolean }[] = [
+  { key: "stock", label: "lev.group.stock", has: (m) => m.group === "stock" },
+  { key: "macro", label: "lev.group.macro", has: (m) => m.group === "index" || m.group === "commodity" },
+  { key: "crypto", label: "lev.group.crypto", has: (m) => m.group === "crypto" },
 ];

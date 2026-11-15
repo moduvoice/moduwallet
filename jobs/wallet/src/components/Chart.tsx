@@ -2,6 +2,7 @@
 // 직접 그린 선 차트(SVG). 손가락으로 문지르면 그 시점 가격을 알려 준다.
 import { useMemo, useRef, useState } from "react";
 import type { HistoryPoint } from "@/lib/types";
+import { toneVar, type Tone } from "./format";
 
 const W = 100;
 const H = 100;
@@ -10,13 +11,14 @@ const PAD_BOTTOM = 8;
 
 type Props = {
   points: HistoryPoint[];
-  color: string; // 선 색(오르면 빨강, 내리면 파랑)
+  tone: Tone; // 선 색: 오르면 up, 내리면 down (색은 언어별 테마가 정한다)
   onScrub?: (p: HistoryPoint | null) => void;
   label: string;
   height?: number;
 };
 
-export function Chart({ points, color, onScrub, label, height = 200 }: Props) {
+export function Chart({ points, tone, onScrub, label, height = 200 }: Props) {
+  const color = toneVar[tone];
   const box = useRef<HTMLDivElement>(null);
   const [active, setActive] = useState<number | null>(null);
 
@@ -48,7 +50,7 @@ export function Chart({ points, color, onScrub, label, height = 200 }: Props) {
     onScrub?.(null);
   };
 
-  const gid = `fill-${color.replace("#", "")}`;
+  const gid = `chart-fill-${tone}`;
   const ax = active === null ? null : geo.x(active);
   const ay = active === null ? null : geo.y(points[active].price);
   const last = points.length - 1;
@@ -76,8 +78,8 @@ export function Chart({ points, color, onScrub, label, height = 200 }: Props) {
       <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="absolute inset-0 h-full w-full overflow-visible">
         <defs>
           <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={color} stopOpacity="0.16" />
-            <stop offset="100%" stopColor={color} stopOpacity="0" />
+            <stop offset="0%" style={{ stopColor: color }} stopOpacity="0.16" />
+            <stop offset="100%" style={{ stopColor: color }} stopOpacity="0" />
           </linearGradient>
         </defs>
         <path d={geo.area} fill={`url(#${gid})`} />
@@ -94,7 +96,7 @@ export function Chart({ points, color, onScrub, label, height = 200 }: Props) {
         <path
           d={geo.line}
           fill="none"
-          stroke={color}
+          style={{ stroke: color }}
           strokeWidth="2"
           strokeLinejoin="round"
           strokeLinecap="round"
@@ -106,14 +108,14 @@ export function Chart({ points, color, onScrub, label, height = 200 }: Props) {
       {ax === null || ay === null ? (
         <span
           className="pointer-events-none absolute h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full ring-4 ring-white"
-          style={{ left: `${geo.x(last)}%`, top: `${geo.y(points[last].price)}%`, background: color }}
+          style={{ left: `clamp(6px, ${geo.x(last)}%, calc(100% - 6px))`, top: `${geo.y(points[last].price)}%`, background: color }}
         />
       ) : (
         <>
           <span className="pointer-events-none absolute inset-y-0 w-px bg-faint" style={{ left: `${ax}%` }} />
           <span
             className="pointer-events-none absolute h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full ring-4 ring-white"
-            style={{ left: `${ax}%`, top: `${ay}%`, background: color }}
+            style={{ left: `clamp(6px, ${ax}%, calc(100% - 6px))`, top: `${ay}%`, background: color }}
           />
         </>
       )}

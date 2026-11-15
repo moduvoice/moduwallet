@@ -2,8 +2,9 @@
 // 여러 화면이 같이 쓰는 작은 부품: 화면 틀, 뼈대, 빈 상태, 오류 상태, 등락 표시, 종목 로고·줄
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
+import { displayName, useLang, useT, type T } from "@/i18n";
 import type { Price, Stock } from "@/lib/types";
-import { fmtPct, fmtUsd, stockHref, toneArrow, toneOf, toneText } from "./format";
+import { fmtPct, fmtQty, fmtUsd, stockHref, toneArrow, toneOf, toneText } from "./format";
 import { IconRefresh } from "./icons";
 
 /** 가운데 정렬된 폰 폭 화면 틀 */
@@ -31,8 +32,9 @@ export function Skeleton({ className = "" }: { className?: string }) {
 
 /** 목록 줄 뼈대 */
 export function RowSkeleton({ rows = 4 }: { rows?: number }) {
+  const t = useT();
   return (
-    <div role="status" aria-label="불러오는 중">
+    <div role="status" aria-label={t("c.loading")}>
       {Array.from({ length: rows }, (_, i) => (
         <div key={i} className="flex items-center gap-3 px-5 py-3">
           <Skeleton className="h-11 w-11 !rounded-full" />
@@ -50,22 +52,16 @@ export function RowSkeleton({ rows = 4 }: { rows?: number }) {
   );
 }
 
-export function ErrorState({
-  title = "불러오지 못했어요",
-  message = "잠시 후 다시 시도해 주세요.",
-  onRetry,
-}: {
-  title?: string;
-  message?: string;
-  onRetry?: () => void;
-}) {
+export function ErrorState({ title, message, onRetry }: { title?: string; message?: string; onRetry?: () => void }) {
+  const t = useT();
+  const body = message ?? t("c.tryLater");
   return (
     <div className="flex flex-col items-center px-6 py-10 text-center" role="alert">
       <span className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-fill text-[22px]" aria-hidden="true">
         !
       </span>
-      <p className="text-[16px] font-bold text-ink">{title}</p>
-      <p className="mt-1 text-[14px] text-mute">{message}</p>
+      <p className="text-[16px] font-bold text-ink">{title ?? t("c.loadFail")}</p>
+      {body && <p className="mt-1 text-[14px] text-mute">{body}</p>}
       {onRetry && (
         <button
           type="button"
@@ -73,7 +69,7 @@ export function ErrorState({
           className="press mt-4 flex h-11 items-center gap-1.5 rounded-full bg-fill px-5 text-[14px] font-semibold text-sub"
         >
           <IconRefresh size={16} />
-          다시 시도
+          {t("c.retry")}
         </button>
       )}
     </div>
@@ -173,11 +169,13 @@ export function DollarLogo({ size = 44 }: { size?: number }) {
 
 /** 종목 한 줄(로고 · 이름 · 현재가 · 등락) */
 export function StockRow({ stock, price, loading }: { stock: Stock; price?: Price; loading?: boolean }) {
+  const t = useT();
+  const lang = useLang();
   return (
     <Link href={stockHref(stock.symbol)} className="row-press flex min-h-[68px] items-center gap-3 px-5 py-3">
       <StockLogo symbol={stock.symbol} icon={stock.icon} />
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-[16px] font-semibold text-ink">{(stock.nameKo ?? stock.name)}</span>
+        <span className="block truncate text-[16px] font-semibold text-ink">{displayName(lang, stock)}</span>
         <span className="block text-[13px] text-mute">{stock.symbol}</span>
       </span>
       <span className="shrink-0 text-right">
@@ -192,19 +190,19 @@ export function StockRow({ stock, price, loading }: { stock: Stock; price?: Pric
             <Skeleton className="ml-auto mt-2 h-3 w-10" />
           </>
         ) : (
-          <span className="text-[13px] text-hint">시세 없음</span>
+          <span className="text-[13px] text-hint">{t("price.none")}</span>
         )}
       </span>
     </Link>
   );
 }
 
-/** 주식은 '주', 코인은 '개' */
-export function unitOf(kind?: Stock["kind"]): string {
-  return kind === "crypto" ? "개" : "주";
+/** 수량 + 단위: 0.5주 / 0.5 shares (코인은 개 / coins) */
+export function qtyText(t: T, kind: Stock["kind"] | undefined, qty: number): string {
+  return t(kind === "crypto" ? "qty.coin" : "qty.share", { n: fmtQty(qty) });
 }
 
 export const btnPrimary =
-  "press flex h-14 w-full items-center justify-center rounded-btn bg-primary text-[17px] font-bold text-white active:bg-primary-press disabled:bg-fill-strong disabled:text-faint";
+  "press flex h-14 w-full items-center justify-center rounded-btn bg-primary px-3 text-center text-[17px] font-bold leading-tight text-white active:bg-primary-press disabled:bg-fill-strong disabled:text-faint";
 export const btnGray =
-  "press flex h-14 w-full items-center justify-center rounded-btn bg-fill text-[17px] font-bold text-sub active:bg-fill-strong";
+  "press flex h-14 w-full items-center justify-center rounded-btn bg-fill px-3 text-center text-[17px] font-bold leading-tight text-sub active:bg-fill-strong";

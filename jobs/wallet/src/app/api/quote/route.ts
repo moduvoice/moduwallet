@@ -1,9 +1,11 @@
 import { quote, HttpError } from "@/lib/server/tm";
 import { handle } from "@/lib/server/route";
+import { rateLimit } from "@/lib/server/limit";
 
 // body: { symbol, side: "buy"|"sell", usd?: number, qty?: number } - usd 와 qty 중 하나
 export async function POST(req: Request) {
   return handle(async () => {
+    rateLimit(req, 60);
     const b = (await req.json().catch(() => ({}))) as { symbol?: string; side?: string; usd?: number; qty?: number };
     const usd = b.usd == null ? undefined : Number(b.usd);
     const qty = b.qty == null ? undefined : Number(b.qty);

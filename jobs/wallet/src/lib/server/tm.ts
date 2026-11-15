@@ -85,7 +85,26 @@ export const listings = cached(10 * 60_000, async (): Promise<Listing[]> => {
       econId: a.economic_asset_id,
       chain: a.chain!,
     }))
-    .sort((x, y) => x.symbol.localeCompare(y.symbol));
+    .sort((x, y) => rank(x.symbol) - rank(y.symbol) || x.symbol.localeCompare(y.symbol));
+});
+
+/** 인기 순서(앞쪽일수록 위). 없는 종목은 뒤에 알파벳순 */
+const POPULAR = [
+  "NVDA", "TSLA", "AAPL", "MSFT", "GOOGL", "AMZN", "META", "SPY", "QQQ", "PLTR", "AMD", "AVGO", "TSM", "SKHY",
+  "MU", "NFLX", "COIN", "MSTR", "HOOD", "CRCL", "SPCX", "IONQ", "SOXX", "BTC", "ETH", "SOL", "GLD", "SLV",
+  "INTC", "ORCL", "COST", "LLY", "BABA", "SMCI", "RKLB", "SOFI", "SHOP", "UBER", "DELL", "QCOM", "ASML",
+];
+function rank(symbol: string) {
+  const i = POPULAR.indexOf(symbol);
+  return i < 0 ? 999 : i;
+}
+
+/** 화면에 보여 줄 종목 = 시세가 있는 종목만(시세 없는 종목은 숨긴다). 10분 캐시 */
+export const visibleListings = cached(10 * 60_000, async (): Promise<Listing[]> => {
+  const all = await listings();
+  const ps = await prices(all.map((l) => l.symbol));
+  const has = new Set(ps.map((p) => p.symbol));
+  return all.filter((l) => has.has(l.symbol));
 });
 
 export async function listing(symbol: string) {
@@ -132,7 +151,7 @@ export async function prices(symbols: string[]): Promise<Price[]> {
   for (let i = 0; i < stale.length; i += 40) {
     const chunk = stale.slice(i, i + 40);
     const { status, body } = await tm<{ results?: { asset_id?: string; points?: Pt[]; error?: string }[] }>(
-      `/v1/defi/market/prices/history/batch?asset_ids=${chunk.map((l) => l.econId).join(",")}&window=1d&resolution=1h`,
+      `/v1/defi/market/prices/history/batch?asset_ids=${chunk.map((l) => l.econId).join(",")}&window=1d&resolution=5m`,
     );
     if (status !== 200) throw new HttpError(502, `prices ${status}`);
     for (const r of body.results ?? []) {
@@ -140,7 +159,10 @@ export async function prices(symbols: string[]): Promise<Price[]> {
       const pts = (r.points ?? []).map((p) => Number(p.price)).filter((p) => p > 0);
       if (!l || !pts.length) continue;
       const last = pts[pts.length - 1];
-      priceCache.set(l.symbol, { at: now, v: { symbol: l.symbol, price: last, change24h: last / pts[0] - 1 } });
+      priceCache.set(l.symbol, {
+        at: now,
+        v: { symbol: l.symbol, price: last, change24h: last / pts[0] - 1, at: new Date(now).toISOString() },
+      });
     }
   }
   return want.map((l) => priceCache.get(l.symbol)?.v).filter((p): p is Price => !!p);
@@ -215,7 +237,8 @@ export async function quote(symbol: string, side: "buy" | "sell", amount: { usd?
     const total = amount.usd ?? (amount.qty ?? 0) * (p?.price ?? 0) * (1 + FEE); // 사용자가 정한 총액(수수료 포함)
     send = total / (1 + FEE);
   } else {
-    send = amount.qty ?? (amount.usd ?? 0) / (p?.price ?? 1);
+    // 팔기를 달러로 정하면 "받는 돈"이 그 금액이 되도록 수수료만큼 더 판다
+    send = amount.qty ?? (amount.usd ?? 0) / ((p?.price ?? 1) * (1 - FEE));
   }
   if (!(send > 0)) throw new HttpError(400, "amount required");
 
@@ -246,6 +269,14 @@ export async function quote(symbol: string, side: "buy" | "sell", amount: { usd?
     if (side === "buy" && amount.qty && Math.abs(Number(q.qty) / amount.qty - 1) > 0.0005) {
       const again = await ask(send * (amount.qty / Number(q.qty)) + 0.01);
       if (again.status === 200 && again.body.qty && again.body.price) ({ status, body: q } = again);
+    }
+    // 달러로 팔 때: 받는 돈(수수료 뺀 값)이 원하는 금액과 다르면 수량을 비례해서 한 번 다시 받는다
+    if (side === "sell" && amount.usd && !amount.qty) {
+      const net = Number(q.notional ?? 0) - Number(q.fee ?? 0);
+      if (net > 0 && Math.abs(net / amount.usd - 1) > 0.0005) {
+        const again = await ask(send * (amount.usd / net));
+        if (again.status === 200 && again.body.qty && again.body.price) ({ status, body: q } = again);
+      }
     }
     const qty = Number(q.qty);
     const notional = Number(q.notional ?? qty * Number(q.price));

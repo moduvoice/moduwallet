@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { StocksScreen } from "@/components/screens/StocksScreen";
 
-export const metadata: Metadata = { title: "주식 찾기" };
+export const metadata: Metadata = { title: "Stocks" };
 
 export default function Page() {
   return <StocksScreen />;

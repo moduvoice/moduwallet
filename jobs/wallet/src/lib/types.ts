@@ -16,6 +16,7 @@ export type Price = {
   symbol: string;
   price: number; // USD
   change24h: number; // 24시간 등락률, 0.012 = +1.2%
+  at?: string; // 서버가 이 시세를 받은 시각(ISO). "몇 분 전 시세" 표시용
 };
 
 export type HistoryPoint = { t: string; price: number }; // t: ISO 시각
@@ -46,10 +47,15 @@ export type Trade = {
   kind?: "spot" | "perp-open" | "perp-close" | "perp-liquidated";
   leverage?: number;
   positionSide?: "long" | "short";
-  pnl?: number; // 닫을 때 손익(USD)
+  pnl?: number; // 실현 손익(USD, 수수료 포함). 주식 팔기·레버리지 정리·청산에 있음
 };
 
-export type Holding = { symbol: string; qty: number; avgPrice: number };
+export type Holding = {
+  symbol: string;
+  qty: number;
+  avgPrice: number; // 평균 매입가(수수료 포함)
+  lastBuyAt?: string; // 마지막으로 산 시각. "오늘 손익" 계산에 쓴다
+};
 
 /** 데모 지갑 상태(브라우저 localStorage 에 저장) */
 export type Portfolio = {
@@ -108,6 +114,7 @@ export type Position = {
   qty: number;
   entry: number;
   liqPrice: number;
+  openFee?: number; // 열 때 낸 수수료(손익 계산에 포함)
   openedAt: string;
   mode: "demo" | "live";
 };

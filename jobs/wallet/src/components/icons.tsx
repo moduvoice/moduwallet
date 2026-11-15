@@ -117,3 +117,11 @@ export const IconBolt = (p: P) => (
     <path d="M13 3L5.5 13.5H11L10 21l8-11h-5.5z" />
   </Base>
 );
+
+export const IconGlobe = (p: P) => (
+  <Base {...p}>
+    <circle cx="12" cy="12" r="8.5" />
+    <path d="M3.5 12h17" />
+    <path d="M12 3.5c2.6 2.4 3.9 5.2 3.9 8.5s-1.3 6.1-3.9 8.5c-2.6-2.4-3.9-5.2-3.9-8.5s1.3-6.1 3.9-8.5z" />
+  </Base>
+);

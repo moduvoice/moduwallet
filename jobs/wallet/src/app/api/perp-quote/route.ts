@@ -1,11 +1,13 @@
 import { perpCloseQuote, perpOpenQuote } from "@/lib/server/perp";
 import { HttpError } from "@/lib/server/tm";
 import { handle } from "@/lib/server/route";
+import { rateLimit } from "@/lib/server/limit";
 
 // 열기: { action: "open", symbol, side: "long"|"short", margin, leverage }
 // 닫기: { action: "close", symbol, side: "long"|"short"(포지션 방향), qty, leverage }
 export async function POST(req: Request) {
   return handle(async () => {
+    rateLimit(req, 60);
     const b = (await req.json().catch(() => ({}))) as Record<string, unknown>;
     const symbol = String(b.symbol ?? "");
     const side = b.side;

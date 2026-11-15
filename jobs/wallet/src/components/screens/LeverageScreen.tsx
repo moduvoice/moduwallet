@@ -1,18 +1,23 @@
 "use client";
 // 레버리지 탭: 진행 중인 것 · 종목 고르기(주식 / 지수·원자재 / 코인)
+import Link from "next/link";
 import { useMemo, useState } from "react";
-import { usePortfolio } from "@/lib/client";
+import { displayName, useLang, useT } from "@/i18n";
+import { useOnline, usePortfolio } from "@/lib/client";
 import type { PerpMarket } from "@/lib/types";
-import { DemoBadge } from "../DemoBadge";
+import { HeaderTools } from "../DemoBadge";
 import { fmtUsd } from "../format";
 import { LeverageGuide } from "../LeverageGuide";
 import { GROUPS, usePerpPrices, usePerps } from "../perp";
 import { PerpOpenSheet } from "../PerpOpenSheet";
-import { LiquidationToast, PositionList } from "../Positions";
+import { PositionList } from "../Positions";
 import { TabBar } from "../TabBar";
 import { Card, Change, ErrorState, RowSkeleton, Screen, Skeleton, StockLogo } from "../ui";
 
 export function LeverageScreen() {
+  const t = useT();
+  const lang = useLang();
+  const online = useOnline();
   const pf = usePortfolio();
   const perps = usePerps();
   const [guide, setGuide] = useState(false);
@@ -29,10 +34,9 @@ export function LeverageScreen() {
 
   return (
     <Screen tabbar>
-      <LiquidationToast markets={markets} />
-      <header className="flex items-center justify-between pl-5 pr-5 pt-2">
-        <h1 className="text-[24px] font-bold text-ink">레버리지</h1>
-        <DemoBadge />
+      <header className="flex items-center justify-between gap-2 pl-5 pr-5 pt-1.5">
+        <h1 className="min-w-0 truncate text-[24px] font-bold text-ink">{t("lev.title")}</h1>
+        <HeaderTools />
       </header>
 
       <main className="flex flex-col gap-3 px-4 pt-2">
@@ -46,12 +50,12 @@ export function LeverageScreen() {
             ⚡
           </span>
           <span className="min-w-0 flex-1">
-            <span className="block text-[16px] font-bold text-white">적은 돈으로 크게 움직여요</span>
-            <span className="mt-0.5 block text-[13px] leading-snug text-white/70">
-              크게 벌 수도, 넣은 돈을 모두 잃을 수도 있어요
-            </span>
+            <span className="block text-[16px] font-bold leading-snug text-white">{t("lev.banner.title")}</span>
+            <span className="mt-0.5 block text-[13px] leading-snug text-white/70">{t("lev.banner.body")}</span>
           </span>
-          <span className="shrink-0 rounded-full bg-white/15 px-3 py-1.5 text-[13px] font-semibold text-white">뭐예요?</span>
+          <span className="shrink-0 whitespace-nowrap rounded-full bg-white/15 px-3 py-1.5 text-[13px] font-semibold text-white">
+            {t("lev.banner.cta")}
+          </span>
         </button>
 
         {/* 진행 중(있을 때만 보임) */}
@@ -62,16 +66,16 @@ export function LeverageScreen() {
           loading={pricesLoading}
           header={
             <h2 className="px-1 pb-2 pt-2 text-[15px] font-bold text-sub">
-              진행 중 <span className="tabular-nums text-primary">{positions.length}</span>
+              {t("lev.active")} <span className="tabular-nums text-primary">{positions.length}</span>
             </h2>
           }
         />
 
         {pricesError && (
-          <p className="flex items-center justify-between rounded-xl bg-card px-4 py-1 text-[13px] text-sub" role="alert">
-            가격을 불러오지 못했어요
-            <button type="button" onClick={reloadPrices} className="h-11 pl-2 font-semibold text-primary">
-              다시 시도
+          <p className="flex items-center justify-between gap-2 rounded-xl bg-card px-4 py-1 text-[13px] text-sub" role="alert">
+            {t("lev.pricesFail")}
+            <button type="button" onClick={reloadPrices} className="min-h-11 shrink-0 pl-2 font-semibold text-primary">
+              {t("c.retry")}
             </button>
           </p>
         )}
@@ -86,7 +90,7 @@ export function LeverageScreen() {
           </Card>
         ) : perps.error && !markets ? (
           <Card>
-            <ErrorState title="종목을 불러오지 못했어요" onRetry={perps.reload} />
+            <ErrorState title={t("lev.marketsFail")} onRetry={perps.reload} />
           </Card>
         ) : (
           GROUPS.map((g) => {
@@ -94,7 +98,7 @@ export function LeverageScreen() {
             if (!list.length) return null;
             return (
               <Card key={g.key} className="pb-2 pt-4">
-                <h2 className="px-5 pb-1 text-[14px] font-semibold text-mute">{g.label}</h2>
+                <h2 className="px-5 pb-1 text-[14px] font-semibold text-mute">{t(g.label)}</h2>
                 <ul>
                   {list.map((m) => {
                     const p = prices[m.symbol];
@@ -102,16 +106,17 @@ export function LeverageScreen() {
                       <li key={m.symbol}>
                         <button
                           type="button"
+                          disabled={!online}
                           onClick={() => {
                             setPicked(m);
                             setSheetOpen(true);
                           }}
-                          className="row-press flex min-h-[68px] w-full items-center gap-3 px-5 py-3 text-left"
+                          className="row-press flex min-h-[68px] w-full items-center gap-3 px-5 py-3 text-left disabled:opacity-60"
                         >
                           <StockLogo symbol={m.symbol} icon={m.icon} />
                           <span className="min-w-0 flex-1">
-                            <span className="block truncate text-[16px] font-semibold text-ink">{m.nameKo}</span>
-                            <span className="block text-[13px] tabular-nums text-mute">최대 {m.maxLeverage}배</span>
+                            <span className="block truncate text-[16px] font-semibold text-ink">{displayName(lang, m)}</span>
+                            <span className="block text-[13px] tabular-nums text-mute">{t("lev.max", { n: m.maxLeverage })}</span>
                           </span>
                           <span className="shrink-0 text-right">
                             {p ? (
@@ -125,7 +130,7 @@ export function LeverageScreen() {
                                 <Skeleton className="ml-auto mt-2 h-3 w-10" />
                               </>
                             ) : (
-                              <span className="text-[13px] text-hint">가격 없음</span>
+                              <span className="text-[13px] text-hint">{t("lev.noPrice")}</span>
                             )}
                           </span>
                         </button>
@@ -139,17 +144,17 @@ export function LeverageScreen() {
         )}
 
         <p className="px-2 pb-2 pt-1 text-[12px] leading-relaxed text-hint">
-          가격·견적 제공: True Markets. 레버리지는 넣은 돈을 모두 잃을 수 있는 위험한 거래예요. 이 화면은 데모라서 실제
-          돈은 움직이지 않고, 투자 권유가 아니에요.
+          {t("lev.foot")}{" "}
+          <Link href="/terms" className="font-semibold underline underline-offset-2">
+            {t("menu.terms")}
+          </Link>
         </p>
       </main>
 
       <TabBar active="leverage" />
 
       <LeverageGuide open={guide} onClose={() => setGuide(false)} />
-      {picked && (
-        <PerpOpenSheet open={sheetOpen} onClose={() => setSheetOpen(false)} market={picked} price={prices[picked.symbol]} />
-      )}
+      {picked && <PerpOpenSheet open={sheetOpen} onClose={() => setSheetOpen(false)} market={picked} price={prices[picked.symbol]} />}
     </Screen>
   );
 }

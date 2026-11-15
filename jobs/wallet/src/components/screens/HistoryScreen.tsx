@@ -1,36 +1,49 @@
 "use client";
-// 거래 내역: 날짜별로 묶어서 보여 준다
+// 거래 내역: 실현 손익 요약 + 날짜별 목록
 import Link from "next/link";
 import { useMemo } from "react";
+import { displayName, useLang, useT } from "@/i18n";
 import { usePortfolio } from "@/lib/client";
 import type { Trade } from "@/lib/types";
-import { fmtDay, fmtQty, fmtSignedUsd, fmtTime, fmtUsd, stockHref, toneOf, toneText } from "../format";
+import { HeaderTools } from "../DemoBadge";
+import { fmtDay, fmtSignedUsd, fmtTime, fmtUsd, stockHref, toneOf, toneText } from "../format";
 import { useStocks } from "../market";
 import { SIDE, usePerps } from "../perp";
 import { TabBar } from "../TabBar";
-import { btnPrimary, Card, EmptyState, Screen, StockLogo, unitOf } from "../ui";
+import { btnPrimary, Card, EmptyState, qtyText, Screen, StockLogo } from "../ui";
 
 export function HistoryScreen() {
+  const t = useT();
+  const lang = useLang();
   const { trades } = usePortfolio();
   const stocks = useStocks();
   const perps = usePerps();
 
+  // lang 이 바뀌면 날짜 글자도 다시 만든다
   const groups = useMemo(() => {
     const out: { day: string; items: Trade[] }[] = [];
-    for (const t of trades) {
-      const day = fmtDay(t.at);
+    for (const tr of trades) {
+      const day = lang ? fmtDay(tr.at) : "";
       const last = out[out.length - 1];
-      if (last && last.day === day) last.items.push(t);
-      else out.push({ day, items: [t] });
+      if (last && last.day === day) last.items.push(tr);
+      else out.push({ day, items: [tr] });
     }
     return out;
-  }, [trades]);
+  }, [trades, lang]);
+
+  // 요약: 이미 끝난 거래의 손익 합계, 지금까지 낸 수수료
+  const realized = trades.reduce((sum, tr) => sum + (tr.pnl ?? 0), 0);
+  const fees = trades.reduce((sum, tr) => sum + (tr.fee ?? 0), 0);
+  const realizedTone = toneOf(realized, 0.005);
 
   return (
     <Screen tabbar>
-      <header className="px-5 pb-3 pt-3.5">
-        <h1 className="text-[24px] font-bold text-ink">거래 내역</h1>
-        {trades.length > 0 && <p className="mt-1 text-[14px] text-mute">지금까지 {trades.length}번 거래했어요</p>}
+      <header className="px-5 pb-3 pt-1.5">
+        <div className="flex items-center justify-between gap-2">
+          <h1 className="min-w-0 truncate text-[24px] font-bold text-ink">{t("hist.title")}</h1>
+          <HeaderTools />
+        </div>
+        {trades.length > 0 && <p className="text-[14px] text-mute">{t("hist.count", { n: trades.length })}</p>}
       </header>
 
       <main className="flex flex-col gap-3 px-4">
@@ -38,68 +51,81 @@ export function HistoryScreen() {
           <Card>
             <EmptyState
               emoji="🧾"
-              title="아직 거래가 없어요"
-              message="주식을 사고팔거나 레버리지를 하면 여기에 차곡차곡 쌓여요."
+              title={t("hist.empty.title")}
+              message={t("hist.empty.body")}
               action={
                 <Link href="/stocks" className={`${btnPrimary} !h-12 px-6 !text-[16px]`}>
-                  주식 둘러보기
+                  {t("home.first.cta")}
                 </Link>
               }
             />
           </Card>
         ) : (
-          groups.map((g) => (
-            <Card key={g.day + g.items[0].id} className="pb-2 pt-4">
-              <h2 className="px-5 pb-1 text-[14px] font-semibold text-mute">{g.day}</h2>
-              <ul>
-                {g.items.map((t) => {
-                  if (t.kind && t.kind !== "spot") {
-                    const market = perps.data?.find((m) => m.symbol === t.symbol);
+          <>
+            <Card className="grid grid-cols-2 gap-3 px-5 py-4">
+              <div className="min-w-0">
+                <p className="text-[13px] font-medium text-mute">{t("hist.sum.pnl")}</p>
+                <p className={`mt-0.5 text-[20px] font-bold tabular-nums ${toneText[realizedTone]}`}>{fmtSignedUsd(realized)}</p>
+              </div>
+              <div className="min-w-0">
+                <p className="text-[13px] font-medium text-mute">{t("hist.sum.fees")}</p>
+                <p className="mt-0.5 text-[20px] font-bold tabular-nums text-ink">{fmtUsd(fees)}</p>
+              </div>
+            </Card>
+
+            {groups.map((g) => (
+              <Card key={g.day + g.items[0].id} className="pb-2 pt-4">
+                <h2 className="px-5 pb-1 text-[14px] font-semibold text-mute">{g.day}</h2>
+                <ul>
+                  {g.items.map((tr) => {
+                    if (tr.kind && tr.kind !== "spot") {
+                      const m = perps.data?.find((x) => x.symbol === tr.symbol);
+                      return (
+                        <li key={tr.id}>
+                          <PerpRow tr={tr} name={displayName(lang, m, tr.symbol)} icon={m?.icon} />
+                        </li>
+                      );
+                    }
+                    const meta = stocks.data?.find((s) => s.symbol === tr.symbol);
+                    const buy = tr.side === "buy";
+                    const hasPnl = !buy && typeof tr.pnl === "number";
                     return (
-                      <li key={t.id}>
-                        <PerpRow t={t} name={market?.nameKo} icon={market?.icon} />
-                      </li>
-                    );
-                  }
-                  const meta = stocks.data?.find((s) => s.symbol === t.symbol);
-                  const buy = t.side === "buy";
-                  return (
-                    <li key={t.id}>
-                      <Link href={stockHref(t.symbol)} className="row-press flex min-h-[68px] items-center gap-3 px-5 py-3">
-                        <StockLogo symbol={t.symbol} icon={meta?.icon} />
-                        <span className="min-w-0 flex-1">
-                          <span className="flex items-center gap-1.5">
-                            <span className="truncate text-[16px] font-semibold text-ink">{meta?.nameKo ?? meta?.name ?? t.symbol}</span>
-                            <span
-                              className={`shrink-0 rounded-md px-1.5 py-0.5 text-[12px] font-bold ${
-                                buy ? "bg-up-soft text-up" : "bg-down-soft text-down"
-                              }`}
-                            >
-                              {buy ? "구매" : "판매"}
+                      <li key={tr.id}>
+                        <Link href={stockHref(tr.symbol)} className="row-press flex min-h-[68px] items-center gap-3 px-5 py-3">
+                          <StockLogo symbol={tr.symbol} icon={meta?.icon} />
+                          <span className="min-w-0 flex-1">
+                            <span className="flex items-center gap-1.5">
+                              <span className="truncate text-[16px] font-semibold text-ink">{displayName(lang, meta, tr.symbol)}</span>
+                              <Badge className={buy ? "bg-up-soft text-up" : "bg-down-soft text-down"}>
+                                {t(buy ? "hist.badge.buy" : "hist.badge.sell")}
+                              </Badge>
+                            </span>
+                            <span className="block truncate text-[13px] tabular-nums text-mute">
+                              {fmtTime(tr.at)} · {qtyText(t, meta?.kind, tr.qty)} · {fmtUsd(tr.price)}
                             </span>
                           </span>
-                          <span className="block truncate text-[13px] tabular-nums text-mute">
-                            {fmtTime(t.at)} · {fmtQty(t.qty)}
-                            {unitOf(meta?.kind)} · {fmtUsd(t.price)}
+                          <span className="shrink-0 text-right">
+                            <span className="block text-[16px] font-semibold tabular-nums text-ink">
+                              {buy ? "-" : "+"}
+                              {fmtUsd(tr.usd)}
+                            </span>
+                            {hasPnl ? (
+                              <span className={`block text-[12px] font-medium tabular-nums ${toneText[toneOf(tr.pnl ?? 0, 0.005)]}`}>
+                                {t("hist.pnl", { v: fmtSignedUsd(tr.pnl ?? 0) })}
+                              </span>
+                            ) : (
+                              <span className="block text-[12px] tabular-nums text-hint">{t("hist.fee", { v: fmtUsd(tr.fee) })}</span>
+                            )}
                           </span>
-                        </span>
-                        <span className="shrink-0 text-right">
-                          <span className={`block text-[16px] font-semibold tabular-nums ${buy ? "text-ink" : "text-primary"}`}>
-                            {buy ? "-" : "+"}
-                            {fmtUsd(t.usd)}
-                          </span>
-                          <span className="block text-[12px] tabular-nums text-hint">수수료 {fmtUsd(t.fee)}</span>
-                        </span>
-                      </Link>
-                    </li>
-                  );
-                })}
-              </ul>
-            </Card>
-          ))
-        )}
-        {trades.length > 0 && (
-          <p className="px-2 pb-2 text-center text-[12px] text-hint">데모 체결 기록이에요 · 이 기기에만 저장돼요</p>
+                        </Link>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </Card>
+            ))}
+            <p className="px-2 pb-2 text-center text-[12px] text-hint">{t("hist.foot")}</p>
+          </>
         )}
       </main>
 
@@ -108,46 +134,44 @@ export function HistoryScreen() {
   );
 }
 
+function Badge({ children, className }: { children: React.ReactNode; className: string }) {
+  return <span className={`shrink-0 whitespace-nowrap rounded-md px-1.5 py-0.5 text-[12px] font-bold ${className}`}>{children}</span>;
+}
+
 /** 레버리지 거래 한 줄: 시작 / 정리 / 청산 */
-function PerpRow({ t, name, icon }: { t: Trade; name?: string; icon?: string }) {
-  const side = t.positionSide ?? (t.side === "buy" ? "long" : "short");
+function PerpRow({ tr, name, icon }: { tr: Trade; name: string; icon?: string }) {
+  const t = useT();
+  const side = tr.positionSide ?? (tr.side === "buy" ? "long" : "short");
   const s = SIDE[side];
-  const pnl = t.pnl ?? 0;
+  const pnl = tr.pnl ?? 0;
   const tone = toneOf(pnl, 0.005);
-  const open = t.kind === "perp-open";
-  const dead = t.kind === "perp-liquidated";
+  const open = tr.kind === "perp-open";
+  const dead = tr.kind === "perp-liquidated";
   return (
     <Link href="/leverage" className="row-press flex min-h-[68px] items-center gap-3 px-5 py-3">
-      <StockLogo symbol={t.symbol} icon={icon} />
+      <StockLogo symbol={tr.symbol} icon={icon} />
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-1.5">
-          <span className="truncate text-[16px] font-semibold text-ink">{name ?? t.symbol}</span>
-          <span
-            className={`shrink-0 rounded-md px-1.5 py-0.5 text-[12px] font-bold ${
-              dead ? "bg-ink text-white" : open ? `${s.soft} ${s.text}` : "bg-fill text-sub"
-            }`}
-          >
-            {dead ? "청산" : open ? "시작" : "정리"}
-          </span>
+          <span className="truncate text-[16px] font-semibold text-ink">{name}</span>
+          <Badge className={dead ? "bg-ink text-white" : open ? `${s.soft} ${s.text}` : "bg-fill text-sub"}>
+            {t(dead ? "hist.badge.liq" : open ? "hist.badge.open" : "hist.badge.close")}
+          </Badge>
         </span>
         <span className="block truncate text-[13px] tabular-nums text-mute">
-          {fmtTime(t.at)} · {t.leverage ?? 1}배 {s.dir}
+          {fmtTime(tr.at)} · {t("lev.x", { n: tr.leverage ?? 1 })} {t(s.dir)}
         </span>
       </span>
       <span className="shrink-0 text-right">
         {open ? (
           <>
-            <span className="block text-[16px] font-semibold tabular-nums text-ink">-{fmtUsd(t.usd)}</span>
-            <span className="block text-[12px] tabular-nums text-hint">수수료 {fmtUsd(t.fee)}</span>
+            <span className="block text-[16px] font-semibold tabular-nums text-ink">-{fmtUsd(tr.usd)}</span>
+            <span className="block text-[12px] tabular-nums text-hint">{t("hist.fee", { v: fmtUsd(tr.fee) })}</span>
           </>
         ) : (
           <>
-            <span className={`block text-[16px] font-semibold tabular-nums ${dead ? "text-ink" : "text-primary"}`}>
-              {dead ? fmtUsd(0) : `+${fmtUsd(t.usd)}`}
-            </span>
+            <span className="block text-[16px] font-semibold tabular-nums text-ink">{dead ? fmtUsd(0) : `+${fmtUsd(tr.usd)}`}</span>
             <span className={`block text-[12px] font-medium tabular-nums ${toneText[tone]}`}>
-              {dead ? "모두 잃음 " : "손익 "}
-              {fmtSignedUsd(pnl)}
+              {t(dead ? "hist.lostAll" : "hist.pnl", { v: fmtSignedUsd(pnl) })}
             </span>
           </>
         )}

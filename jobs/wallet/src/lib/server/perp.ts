@@ -4,25 +4,25 @@ import type { PerpCloseQuote, PerpGroup, PerpMarket, PerpQuote, Price, Range } f
 import { cached, demoUser, HttpError, orgToken, quotesApi, tm } from "./tm";
 
 /** 보여 줄 종목만 고른다(밈코인·이름이 불분명한 것은 뺌). 순서 = 화면 순서 */
-const PICK: { symbol: string; nameKo: string; group: PerpGroup }[] = [
-  { symbol: "NVDA", nameKo: "엔비디아", group: "stock" },
-  { symbol: "TSLA", nameKo: "테슬라", group: "stock" },
-  { symbol: "AAPL", nameKo: "애플", group: "stock" },
-  { symbol: "SKHX", nameKo: "SK하이닉스", group: "stock" },
-  { symbol: "MU", nameKo: "마이크론", group: "stock" },
-  { symbol: "INTC", nameKo: "인텔", group: "stock" },
-  { symbol: "SNDK", nameKo: "샌디스크", group: "stock" },
-  { symbol: "CRCL", nameKo: "서클", group: "stock" },
-  { symbol: "SPCX", nameKo: "스페이스X", group: "stock" },
-  { symbol: "MRNA", nameKo: "모더나", group: "stock" },
-  { symbol: "SP500", nameKo: "S&P 500", group: "index" },
-  { symbol: "CL", nameKo: "원유(WTI)", group: "commodity" },
-  { symbol: "BRENTOIL", nameKo: "브렌트유", group: "commodity" },
-  { symbol: "SILVER", nameKo: "은", group: "commodity" },
-  { symbol: "BTC", nameKo: "비트코인", group: "crypto" },
-  { symbol: "ETH", nameKo: "이더리움", group: "crypto" },
-  { symbol: "SOL", nameKo: "솔라나", group: "crypto" },
-  { symbol: "XRP", nameKo: "리플", group: "crypto" },
+const PICK: { symbol: string; name: string; nameKo: string; group: PerpGroup }[] = [
+  { symbol: "NVDA", name: "NVIDIA", nameKo: "엔비디아", group: "stock" },
+  { symbol: "TSLA", name: "Tesla", nameKo: "테슬라", group: "stock" },
+  { symbol: "AAPL", name: "Apple", nameKo: "애플", group: "stock" },
+  { symbol: "SKHX", name: "SK hynix", nameKo: "SK하이닉스", group: "stock" },
+  { symbol: "MU", name: "Micron", nameKo: "마이크론", group: "stock" },
+  { symbol: "INTC", name: "Intel", nameKo: "인텔", group: "stock" },
+  { symbol: "SNDK", name: "Sandisk", nameKo: "샌디스크", group: "stock" },
+  { symbol: "CRCL", name: "Circle", nameKo: "서클", group: "stock" },
+  { symbol: "SPCX", name: "SpaceX", nameKo: "스페이스X", group: "stock" },
+  { symbol: "MRNA", name: "Moderna", nameKo: "모더나", group: "stock" },
+  { symbol: "SP500", name: "S&P 500", nameKo: "S&P 500", group: "index" },
+  { symbol: "CL", name: "Crude Oil (WTI)", nameKo: "원유(WTI)", group: "commodity" },
+  { symbol: "BRENTOIL", name: "Brent Crude Oil", nameKo: "브렌트유", group: "commodity" },
+  { symbol: "SILVER", name: "Silver", nameKo: "은", group: "commodity" },
+  { symbol: "BTC", name: "Bitcoin", nameKo: "비트코인", group: "crypto" },
+  { symbol: "ETH", name: "Ethereum", nameKo: "이더리움", group: "crypto" },
+  { symbol: "SOL", name: "Solana", nameKo: "솔라나", group: "crypto" },
+  { symbol: "XRP", name: "XRP", nameKo: "리플", group: "crypto" },
 ];
 
 type RawPerp = {
@@ -49,7 +49,7 @@ export const perpListings = cached(10 * 60_000, async (): Promise<PerpListing[]>
     return [
       {
         symbol: p.symbol,
-        name: a.name,
+        name: p.name,
         nameKo: p.nameKo,
         icon: a.image?.small || a.icon,
         group: p.group,
@@ -103,10 +103,13 @@ export async function perpPrices(symbols: string[]): Promise<Price[]> {
       .filter((l) => !(priceCache.get(l.symbol) && now - priceCache.get(l.symbol)!.at < 30_000))
       .map(async (l) => {
         try {
-          const pts = await perpSeries(l.econId, "1d", "1h");
+          const pts = await perpSeries(l.econId, "1d", "5m");
           if (!pts.length) return;
           const last = pts[pts.length - 1].price;
-          priceCache.set(l.symbol, { at: now, v: { symbol: l.symbol, price: last, change24h: last / pts[0].price - 1 } });
+          priceCache.set(l.symbol, {
+            at: now,
+            v: { symbol: l.symbol, price: last, change24h: last / pts[0].price - 1, at: new Date(now).toISOString() },
+          });
         } catch {
           // 한 종목 실패는 건너뛴다
         }

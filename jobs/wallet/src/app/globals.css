@@ -19,7 +19,10 @@
   --color-up-press: #d22030;
   --color-up-soft: #ffeeee;
   --color-down: #3182f6;
+  --color-down-press: #1b64da;
   --color-down-soft: #e8f3ff;
+  --color-danger: #f04452;
+  --color-danger-soft: #ffeeee;
   --color-ok: #03b26c;
   --color-ok-soft: #e6f7f0;
   --color-warn: #d97706;
@@ -42,9 +45,79 @@
   --tabbar-h: 60px;
 }
 
+/*
+ * 등락 색은 언어별로 다르다.
+ *  - 한국어·중국어(data-tone="east", 기본): 오르면 빨강, 내리면 파랑
+ *  - 그 밖의 언어(data-tone="west"): 오르면 초록, 내리면 빨강
+ */
+html[data-tone="west"] {
+  --color-up: #0b9e63;
+  --color-up-press: #088552;
+  --color-up-soft: #e6f7f0;
+  --color-down: #f04452;
+  --color-down-press: #d22030;
+  --color-down-soft: #ffeeee;
+}
+
 html {
   background: #e9ecef;
   -webkit-text-size-adjust: 100%;
+}
+
+/* 첫 화면: 영어가 아닌 언어는 글자가 바뀔 때까지 잠깐 숨긴다(깜빡임 방지). 1.5초 뒤에는 무조건 보인다 */
+html.i18n-wait body {
+  visibility: hidden;
+  animation: i18n-show 0s 1.5s forwards;
+}
+@keyframes i18n-show {
+  to {
+    visibility: visible;
+  }
+}
+
+/* 숫자 키패드와 큰 금액 글자: 키가 낮은 화면(작은 폰)에서는 줄여서 '다음' 버튼이 화면 안에 남게 한다 */
+.kp-key {
+  height: 56px;
+}
+.amount-big {
+  font-size: 44px;
+}
+.amount-big.is-long {
+  font-size: 34px;
+}
+@media (max-height: 720px) {
+  .kp-key {
+    height: 46px;
+  }
+  .amount-big {
+    font-size: 36px;
+  }
+  .amount-big.is-long {
+    font-size: 28px;
+  }
+}
+@media (max-height: 600px) {
+  .kp-key {
+    height: 38px;
+  }
+  .amount-big {
+    font-size: 30px;
+  }
+}
+
+/* 바텀 시트 높이: 보통은 화면의 94%, 아주 낮은 화면(작은 폰)에서는 끝까지 쓴다 */
+.sheet-panel {
+  max-height: 94dvh;
+}
+@media (max-height: 600px) {
+  .sheet-panel {
+    max-height: 100dvh;
+  }
+}
+@media (max-width: 350px) {
+  .amount-big.is-long {
+    font-size: 26px;
+  }
 }
 
 body {

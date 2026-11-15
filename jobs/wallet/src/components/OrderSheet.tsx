@@ -2,26 +2,33 @@
 // 주문 시트: 금액 입력(키패드, 달러 ↔ 주) → 견적 확인 → 데모 체결 → 완료
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { executeDemo, getQuote, usePortfolio } from "@/lib/client";
+import { displayName, useLang, useT } from "@/i18n";
+import { executeDemo, getQuote, useOnline, usePortfolio } from "@/lib/client";
 import type { Stock, Trade, TradeQuote } from "@/lib/types";
-import { fmtQty, fmtUsd } from "./format";
+import { LocalHint } from "./chrome";
+import { fmtUsd } from "./format";
 import { IconClose, IconInfo } from "./icons";
 import {
   applyKey,
-  Countdown,
+  CheckBurst,
   floor2,
   floor6,
   isExpired,
   Keypad,
+  QuietNote,
+  quoteErrorKey,
+  quoteErrorOf,
   QuoteRow,
+  QuoteSource,
   showNumber,
   Spinner,
   toText,
   useQuoteExpiry,
   type Key,
+  type QuoteError,
 } from "./orderKit";
 import { Sheet } from "./Sheet";
-import { btnGray, StockLogo, unitOf } from "./ui";
+import { btnGray, qtyText, StockLogo } from "./ui";
 
 type Side = "buy" | "sell";
 
@@ -34,8 +41,14 @@ type Props = {
 };
 
 export function OrderSheet({ open, onClose, stock, side, price }: Props) {
+  const t = useT();
+  const lang = useLang();
   return (
-    <Sheet open={open} onClose={onClose} label={`${stock.nameKo ?? stock.name} ${side === "buy" ? "사기" : "팔기"}`}>
+    <Sheet
+      open={open}
+      onClose={onClose}
+      label={t(side === "buy" ? "order.title.buy" : "order.title.sell", { name: displayName(lang, stock) })}
+    >
       {(close) => <OrderBody stock={stock} side={side} price={price} close={close} />}
     </Sheet>
   );
@@ -57,15 +70,19 @@ function fit(q: TradeQuote, usdc: number, heldQty: number, all: boolean): TradeQ
 }
 
 function OrderBody({ stock, side, price, close }: Omit<Props, "open" | "onClose"> & { close: () => void }) {
+  const t = useT();
+  const lang = useLang();
+  const online = useOnline();
   const pf = usePortfolio();
   const held = pf.holdings.find((h) => h.symbol === stock.symbol);
   const heldQty = held?.qty ?? 0;
   const usdc = pf.usdc;
-  const unit = unitOf(stock.kind);
-  const name = stock.nameKo ?? stock.name;
-  const verb = side === "buy" ? "사기" : "팔기";
-  const accent = side === "buy" ? "bg-up active:bg-up-press" : "bg-primary active:bg-primary-press";
+  const coin = stock.kind === "crypto";
+  const name = displayName(lang, stock);
+  const verb = t(side === "buy" ? "act.buy" : "act.sell");
+  const accent = side === "buy" ? "bg-up active:bg-up-press" : "bg-down active:bg-down-press";
   const px = price ?? held?.avgPrice; // 환산에 쓰는 1주 가격
+  const qtyOf = (n: number) => qtyText(t, stock.kind, n);
 
   const [mode, setMode] = useState<Mode>("usd");
   const [text, setText] = useState("");
@@ -74,7 +91,7 @@ function OrderBody({ stock, side, price, close }: Omit<Props, "open" | "onClose"
   const [notice, setNotice] = useState(0); // 0 보다 크면 "최대로 바꿨어요" 안내(바뀔 때마다 흔들림)
   const [step, setStep] = useState<"amount" | "confirm" | "done">("amount");
   const [nonce, setNonce] = useState(0);
-  const [result, setResult] = useState<{ key: string; quote?: TradeQuote; error?: boolean }>();
+  const [result, setResult] = useState<{ key: string; quote?: TradeQuote; error?: QuoteError }>();
   const [trade, setTrade] = useState<Trade>();
   const [submitError, setSubmitError] = useState<string>();
   const [showRisk, setShowRisk] = useState(false);
@@ -92,7 +109,7 @@ function OrderBody({ stock, side, price, close }: Omit<Props, "open" | "onClose"
   const reqValue = isMax ? (side === "buy" ? floor2(usdc * trim) : heldQty) : amount;
   const estUsd = reqKind === "usd" ? reqValue : px ? reqValue * px : undefined;
   const tooSmall = !isMax && amount > 0 && estUsd !== undefined && estUsd < MIN_USD;
-  const valid = reqValue > 0 && canOrder && !tooSmall;
+  const valid = reqValue > 0 && canOrder && !tooSmall && online;
   const key = valid ? `${side}:${reqKind}:${reqValue}:${nonce}` : "";
 
   // 금액이 바뀌면 잠깐(0.4초) 기다렸다가 견적을 새로 받는다
@@ -105,7 +122,7 @@ function OrderBody({ stock, side, price, close }: Omit<Props, "open" | "onClose"
           if (!alive) return;
           if (side === "buy" && q.usd > usdc + 1e-6 && q.usd > 0) {
             // 수수료까지 더하면 잔고를 넘는다: 최대로 바꾸고, 이미 최대면 조금 낮춰 다시 받는다
-            if (isMax) setTrim((t) => t * (usdc / q.usd) * 0.999);
+            if (isMax) setTrim((v) => v * (usdc / q.usd) * 0.999);
             else {
               setIsMax(true);
               setNotice((n) => n + 1);
@@ -120,8 +137,8 @@ function OrderBody({ stock, side, price, close }: Omit<Props, "open" | "onClose"
           }
           setResult({ key, quote: q });
         })
-        .catch(() => {
-          if (alive) setResult({ key, error: true });
+        .catch((e) => {
+          if (alive) setResult({ key, error: quoteErrorOf(e) });
         });
     }, 400);
     return () => {
@@ -133,7 +150,7 @@ function OrderBody({ stock, side, price, close }: Omit<Props, "open" | "onClose"
   const fresh = result && result.key === key ? result : undefined;
   const quote = fresh?.quote ? fit(fresh.quote, usdc, heldQty, isMax && side === "sell") : undefined;
   const quoteLoading = !!key && !fresh;
-  const quoteError = !!fresh && !quote;
+  const quoteError: QuoteError | undefined = fresh && !quote ? (fresh.error ?? "fail") : undefined;
   const expiresAt = fresh?.quote?.expiresAt;
 
   // 견적이 만료되면 새로 받는다
@@ -147,8 +164,8 @@ function OrderBody({ stock, side, price, close }: Omit<Props, "open" | "onClose"
       return toText(quote ? floor6(quote.qty) : Number.isFinite(est) ? floor6(est * trim) : 0, 6);
     }
     if (m === "qty") return toText(floor6(heldQty), 6) || toText(heldQty, 10);
-    const usd = quote ? floor2(quote.usd) : maxOf("usd");
-    return Number.isFinite(usd) && usd > 0 ? usd.toFixed(2) : "";
+    const v = quote ? floor2(quote.usd) : maxOf("usd");
+    return Number.isFinite(v) && v > 0 ? v.toFixed(2) : "";
   };
   const shown = isMax ? maxText(mode) : text;
   const shownNum = Number(shown) || 0;
@@ -187,22 +204,22 @@ function OrderBody({ stock, side, price, close }: Omit<Props, "open" | "onClose"
     if (next !== shown) enter(next); // 더 못 넣는 키(자릿수 한도)는 그대로 둔다
   };
 
-  const canNext = !!quote && !quoteLoading;
+  const canNext = !!quote && !quoteLoading && online;
 
   const submit = () => {
     if (!quote) return;
     if (isExpired(quote)) {
-      setSubmitError("견적 시간이 지나서 새로 받았어요. 다시 확인해 주세요.");
+      setSubmitError(t("quote.expired"));
       setNonce((n) => n + 1);
       return;
     }
     try {
-      const t = executeDemo(quote);
-      setTrade(t);
+      const done = executeDemo(quote);
+      setTrade(done);
       setStep("done");
       navigator.vibrate?.(12);
-    } catch (e) {
-      setSubmitError(e instanceof Error ? e.message : "주문하지 못했어요. 다시 시도해 주세요.");
+    } catch {
+      setSubmitError(t("err.order"));
     }
   };
 
@@ -210,40 +227,23 @@ function OrderBody({ stock, side, price, close }: Omit<Props, "open" | "onClose"
   if (step === "done" && trade) {
     return (
       <div className="flex flex-col items-center px-6 pt-10 text-center">
-        <span className="relative flex h-[76px] w-[76px] items-center justify-center">
-          <span className="anim-ring absolute inset-0 rounded-full bg-primary" aria-hidden="true" />
-          <span className="anim-pop relative flex h-[76px] w-[76px] items-center justify-center rounded-full bg-primary">
-            <svg width="40" height="40" viewBox="0 0 40 40" fill="none" aria-hidden="true">
-              <path
-                className="anim-check"
-                d="M10 20.5l7 7 13.5-14.5"
-                stroke="#fff"
-                strokeWidth="4.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          </span>
-        </span>
+        <CheckBurst />
         <h2 className="anim-rise mt-6 text-[24px] font-bold leading-snug text-ink" role="status">
-          {name} {fmtQty(trade.qty)}
-          {unit}를
-          <br />
-          {side === "buy" ? "샀어요" : "팔았어요"}
+          {t(side === "buy" ? "order.done.buy" : "order.done.sell", { name, qty: qtyOf(trade.qty) })}
         </h2>
         <p className="anim-rise mt-2 text-[15px] text-mute">
-          {side === "buy" ? "낸 금액" : "받은 금액"} {fmtUsd(trade.usd)} · 데모 체결
+          {t(side === "buy" ? "order.done.paid" : "order.done.got", { v: fmtUsd(trade.usd) })}
         </p>
         <div className="mt-9 flex w-full gap-2">
-          <Link href="/history" className={btnGray} onClick={close}>
-            내역 보기
+          <Link href="/history" replace className={btnGray}>
+            {t("order.done.history")}
           </Link>
           <button
             type="button"
             onClick={close}
             className="press flex h-14 w-full items-center justify-center rounded-btn bg-primary text-[17px] font-bold text-white active:bg-primary-press"
           >
-            확인
+            {t("c.ok")}
           </button>
         </div>
       </div>
@@ -254,13 +254,13 @@ function OrderBody({ stock, side, price, close }: Omit<Props, "open" | "onClose"
     <div className="flex items-center gap-2.5 px-5 pt-4">
       <StockLogo symbol={stock.symbol} icon={stock.icon} size={32} />
       <h2 className="min-w-0 flex-1 truncate text-[17px] font-bold text-ink">
-        {name} {verb}
+        {t(side === "buy" ? "order.title.buy" : "order.title.sell", { name })}
       </h2>
       <button
         type="button"
         onClick={close}
-        aria-label="닫기"
-        className="press -mr-2 flex h-11 w-11 items-center justify-center rounded-full text-mute"
+        aria-label={t("c.close")}
+        className="press -mr-2 flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-mute"
       >
         <IconClose size={22} />
       </button>
@@ -274,90 +274,81 @@ function OrderBody({ stock, side, price, close }: Omit<Props, "open" | "onClose"
         {header}
         <div className="px-6 pt-5">
           <p className="text-[24px] font-bold leading-snug text-ink">
-            {quote ? (
-              <>
-                {fmtQty(quote.qty)}
-                {unit}를 {side === "buy" ? "살까요?" : "팔까요?"}
-              </>
-            ) : (
-              "견적을 새로 받고 있어요"
-            )}
+            {quote ? t(side === "buy" ? "order.ask.buy" : "order.ask.sell", { qty: qtyOf(quote.qty) }) : t("quote.refreshing")}
           </p>
 
           <dl className="mt-5 space-y-3.5 rounded-[18px] bg-fill px-4 py-4 text-[15px]" aria-busy={!quote}>
             <QuoteRow
-              label={side === "buy" ? "내는 금액" : "받는 금액"}
+              label={t(side === "buy" ? "order.pay" : "order.receive")}
               value={quote ? fmtUsd(quote.usd) : undefined}
               strong
-              hint={side === "buy" ? "수수료 포함" : "수수료 뺀 금액"}
+              hint={t(side === "buy" ? "order.pay.hint" : "order.receive.hint")}
+              sub={quote && <LocalHint usd={quote.usd} className="!text-[12px]" />}
             />
-            <QuoteRow
-              label={side === "buy" ? "받는 수량" : "파는 수량"}
-              value={quote ? `${fmtQty(quote.qty)}${unit}` : undefined}
-            />
-            <QuoteRow label={`1${unit}당 가격`} value={quote ? fmtUsd(quote.price) : undefined} />
-            <QuoteRow label="수수료 (0.2%)" value={quote ? fmtUsd(quote.fee) : undefined} />
+            <QuoteRow label={t(side === "buy" ? "order.getQty" : "order.sellQty")} value={quote ? qtyOf(quote.qty) : undefined} />
+            <QuoteRow label={t(coin ? "order.pricePer.coin" : "order.pricePer.share")} value={quote ? fmtUsd(quote.price) : undefined} />
+            <QuoteRow label={t("order.fee")} value={quote ? fmtUsd(quote.fee) : undefined} />
           </dl>
 
-          <p className="mt-3 flex min-h-5 items-center justify-between text-[13px] text-mute">
-            <span>
-              견적 출처: True Markets
-              {quote && (
-                <span className="ml-1.5 rounded-full bg-fill px-2 py-0.5 text-[12px] font-semibold text-sub">
-                  {quote.source === "estimate" ? "현재가 기준 예상" : "실시간 견적"}
-                </span>
-              )}
-            </span>
-            {quote && <Countdown key={quote.expiresAt} expiresAt={quote.expiresAt} />}
-          </p>
+          <QuoteSource quote={quote} />
+          <QuietNote>{t(side === "buy" ? "spread.buy" : "spread.sell")}</QuietNote>
 
-          <div className="mt-4 rounded-[14px] border border-line px-3.5 py-3">
+          <div className="mt-3 rounded-[14px] border border-line px-3.5 py-3">
             <p className="flex items-start gap-2 text-[13px] leading-relaxed text-sub">
               <IconInfo size={16} className="mt-0.5 shrink-0 text-hint" />
               <span>
-                토큰화 주식은 실제 주식이 아닌 증서이며, 원금을 잃을 수 있어요.{" "}
+                {t("risk.line")}{" "}
                 <button
                   type="button"
                   onClick={() => setShowRisk((v) => !v)}
                   aria-expanded={showRisk}
                   className="-my-3 py-3 font-semibold text-sub underline underline-offset-2"
                 >
-                  {showRisk ? "접기" : "자세히"}
+                  {t(showRisk ? "c.less" : "c.more")}
                 </button>
               </span>
             </p>
             {showRisk && (
-              <ul className="anim-rise mt-2 list-disc space-y-1 pl-9 text-[13px] leading-relaxed text-mute">
-                <li>주가를 따라 움직이는 토큰이라, 의결권 같은 주주 권리는 없을 수 있어요.</li>
-                <li>가격이 실제 주식과 조금 다를 수 있고, 장이 닫힌 시간에는 차이가 커질 수 있어요.</li>
-                <li>발행사나 블록체인에 문제가 생기면 손실이 날 수 있어요.</li>
-                <li>지금은 데모라서 실제 돈은 움직이지 않아요.</li>
-              </ul>
+              <div className="anim-rise">
+                <ul className="mt-2 list-disc space-y-1 pl-9 text-[13px] leading-relaxed text-mute">
+                  <li>{t("risk.1")}</li>
+                  <li>{t("risk.2")}</li>
+                  <li>{t("risk.3")}</li>
+                  <li>{t("risk.4")}</li>
+                </ul>
+                <Link
+                  href="/terms"
+                  replace
+                  className="ml-6 mt-1 inline-flex min-h-11 items-center text-[13px] font-semibold text-primary underline underline-offset-2"
+                >
+                  {t("risk.terms")}
+                </Link>
+              </div>
             )}
           </div>
 
-          <p className="mt-3 min-h-5 text-center text-[13px] font-medium text-up" role="alert">
-            {submitError ?? (quoteError ? "견적을 받지 못했어요." : "")}
+          <p className="mt-3 min-h-5 text-center text-[13px] font-medium text-danger" role="alert">
+            {!online ? t("offline.order") : (submitError ?? (quoteError ? t(quoteErrorKey[quoteError]) : ""))}
           </p>
 
-          <div className="mt-2 flex gap-2">
+          <div className="sticky bottom-0 mt-2 flex gap-2 bg-card pb-1 pt-1">
             <button
               type="button"
-              className="press flex h-14 w-[34%] shrink-0 items-center justify-center rounded-btn bg-fill text-[17px] font-bold text-sub active:bg-fill-strong"
+              className="press flex h-14 w-[34%] shrink-0 items-center justify-center rounded-btn bg-fill px-2 text-center text-[17px] font-bold leading-tight text-sub active:bg-fill-strong"
               onClick={() => {
                 setSubmitError(undefined);
                 setStep("amount");
               }}
             >
-              이전
+              {t("c.prev")}
             </button>
             {quoteError ? (
               <button
                 type="button"
                 onClick={() => setNonce((n) => n + 1)}
-                className="press flex h-14 flex-1 items-center justify-center rounded-btn bg-ink text-[17px] font-bold text-white"
+                className="press flex h-14 flex-1 items-center justify-center rounded-btn bg-ink px-2 text-center text-[17px] font-bold leading-tight text-white"
               >
-                견적 다시 받기
+                {t("quote.again")}
               </button>
             ) : (
               <button
@@ -366,7 +357,7 @@ function OrderBody({ stock, side, price, close }: Omit<Props, "open" | "onClose"
                 disabled={!canNext}
                 className={`press flex h-14 flex-1 items-center justify-center rounded-btn text-[17px] font-bold text-white disabled:bg-fill-strong disabled:text-faint ${accent}`}
               >
-                {canNext ? verb : <Spinner />}
+                {canNext || !online ? verb : <Spinner />}
               </button>
             )}
           </div>
@@ -376,39 +367,41 @@ function OrderBody({ stock, side, price, close }: Omit<Props, "open" | "onClose"
   }
 
   // ---------- 금액 입력 ----------
-  const sourceText = quote?.source === "estimate" ? "현재가 기준 예상" : "True Markets 실시간 견적";
+  const sourceText = t(quote?.source === "estimate" ? "quote.est" : "quote.live");
 
   // 입력값 아래 한 줄: 다른 단위로 바꾼 값(달러 ↔ 주)
   let convert = "";
-  if (quote) convert = mode === "usd" ? `≈ ${fmtQty(quote.qty)}${unit}` : `≈ ${fmtUsd(quote.usd)}`;
-  else if (shownNum > 0 && px) convert = mode === "usd" ? `≈ ${fmtQty(shownNum / px)}${unit}` : `≈ ${fmtUsd(shownNum * px)}`;
+  if (quote) convert = mode === "usd" ? `≈ ${qtyOf(quote.qty)}` : `≈ ${fmtUsd(quote.usd)}`;
+  else if (shownNum > 0 && px) convert = mode === "usd" ? `≈ ${qtyOf(shownNum / px)}` : `≈ ${fmtUsd(shownNum * px)}`;
 
   let status: { text: string; tone: "mute" | "bad" | "good" };
-  if (!canOrder)
-    status = {
-      text: side === "buy" ? "살 수 있는 달러가 없어요" : `가진 ${stock.kind === "crypto" ? "코인" : "주식"}이 없어요`,
-      tone: "mute",
-    };
-  else if (tooSmall) status = { text: `${fmtUsd(MIN_USD)}부터 주문할 수 있어요`, tone: "bad" };
-  else if (!key) status = { text: mode === "usd" ? "금액을 입력해 주세요" : "수량을 입력해 주세요", tone: "mute" };
-  else if (quoteLoading) status = { text: [convert, "견적 받는 중…"].filter(Boolean).join(" · "), tone: "mute" };
+  if (!online) status = { text: t("offline.order"), tone: "bad" };
+  else if (!canOrder)
+    status = { text: t(side === "buy" ? "order.st.noCash" : coin ? "order.st.noHold.coin" : "order.st.noHold.stock"), tone: "mute" };
+  else if (tooSmall) status = { text: t("order.st.min", { min: fmtUsd(MIN_USD) }), tone: "bad" };
+  else if (!key) status = { text: t(mode === "usd" ? "order.st.enterUsd" : "order.st.enterQty"), tone: "mute" };
+  else if (quoteLoading) status = { text: [convert, t("quote.loading")].filter(Boolean).join(" · "), tone: "mute" };
   else if (quote) status = { text: `${convert} · ${sourceText}`, tone: "good" };
-  else status = { text: "견적을 받지 못했어요", tone: "bad" };
+  else status = { text: t(quoteErrorKey[quoteError ?? "fail"]), tone: "bad" };
 
   const limitText =
     side === "buy"
-      ? `살 수 있는 금액 ${fmtUsd(floor2(usdc))}`
-      : `가진 수량 ${fmtQty(heldQty)}${unit}${px ? ` · 약 ${fmtUsd(heldQty * px)}` : ""}`;
+      ? t("order.limit.buy", { v: fmtUsd(floor2(usdc)) })
+      : px
+        ? t("order.limit.sell", { qty: qtyOf(heldQty), v: fmtUsd(heldQty * px) })
+        : t("order.limit.sellNoPx", { qty: qtyOf(heldQty) });
 
   const steps = mode === "usd" ? [10, 50, 100] : px && px >= 5000 ? [0.001, 0.01, 0.1] : [0.1, 1, 10];
-  const big = showNumber(shown).length + 1 > 10;
+  const unitLabel = t(coin ? "unit.coin" : "unit.share");
+  const amountText = mode === "usd" ? `$${showNumber(shown)}` : qtyOf(0).replace("0", showNumber(shown));
+  const long = amountText.length > 10;
 
   return (
     <div>
       {header}
 
       <div className="px-6 pb-1 pt-3 text-center">
-        <div className="flex justify-center" role="group" aria-label="입력 단위">
+        <div className="flex justify-center" role="group" aria-label={t("order.unit.aria")}>
           <div className="flex rounded-full bg-fill p-1">
             {(["usd", "qty"] as const).map((m) => {
               const on = m === mode;
@@ -422,7 +415,7 @@ function OrderBody({ stock, side, price, close }: Omit<Props, "open" | "onClose"
                     on ? "bg-card text-ink shadow-[0_1px_3px_rgba(0,0,0,0.1)]" : "text-mute"
                   }`}
                 >
-                  {m === "usd" ? "달러" : unit}
+                  {m === "usd" ? t("unit.usd") : unitLabel}
                 </button>
               );
             })}
@@ -431,33 +424,31 @@ function OrderBody({ stock, side, price, close }: Omit<Props, "open" | "onClose"
 
         <p
           key={notice}
-          className={`mt-3 font-bold leading-tight tracking-[-0.03em] tabular-nums ${big ? "text-[34px]" : "text-[44px]"} ${
+          className={`amount-big mt-3 font-bold leading-tight tracking-[-0.03em] tabular-nums ${long ? "is-long" : ""} ${
             shown ? "text-ink" : "text-faint"
           } ${notice ? "anim-shake" : ""}`}
           aria-live="polite"
-          aria-label={`주문 ${mode === "usd" ? "금액 $" : "수량 "}${showNumber(shown)}${mode === "qty" ? unit : ""}`}
+          aria-label={t(mode === "usd" ? "order.amount.aria.usd" : "order.amount.aria.qty", { v: amountText })}
         >
-          {mode === "usd" && "$"}
-          {showNumber(shown)}
-          {mode === "qty" && <span className="ml-0.5 text-[0.6em]">{unit}</span>}
+          {amountText}
         </p>
         <p
-          className={`mt-1 flex min-h-6 items-center justify-center gap-1.5 text-[14px] font-medium ${
-            status.tone === "bad" ? "text-up" : status.tone === "good" ? "text-primary" : "text-mute"
+          className={`mt-1 flex min-h-6 flex-wrap items-center justify-center gap-x-1.5 text-[14px] font-medium ${
+            status.tone === "bad" ? "text-danger" : status.tone === "good" ? "text-primary" : "text-mute"
           }`}
           role="status"
         >
           {status.text}
-          {quoteError && (
+          {quoteError && online && (
             <button type="button" onClick={() => setNonce((n) => n + 1)} className="-my-2.5 px-1 py-2.5 font-bold underline">
-              다시 시도
+              {t("c.retry")}
             </button>
           )}
         </p>
         <p className="mt-0.5 min-h-5 text-[13px] text-mute" role="status">
           {notice > 0 && canOrder ? (
             <span key={notice} className="anim-rise inline-block font-semibold text-sub">
-              {mode === "usd" ? "최대 금액으로 바꿨어요" : "최대 수량으로 바꿨어요"}
+              {t(mode === "usd" ? "order.clamped.usd" : "order.clamped.qty")}
             </span>
           ) : (
             limitText
@@ -465,14 +456,14 @@ function OrderBody({ stock, side, price, close }: Omit<Props, "open" | "onClose"
         </p>
       </div>
 
-      <div className="mt-2 flex gap-2 px-5">
+      <div className="mt-2 flex gap-1.5 px-4">
         {steps.map((add) => (
           <button
             key={`${mode}${add}`}
             type="button"
             disabled={!canOrder}
             onClick={() => enter(toText(shownNum + add, DP[mode]))}
-            className="press h-11 flex-1 rounded-full bg-fill text-[14px] font-semibold tabular-nums text-sub active:bg-fill-strong disabled:text-faint"
+            className="press h-11 min-w-0 flex-1 rounded-full bg-fill text-[14px] font-semibold tabular-nums text-sub active:bg-fill-strong disabled:text-faint"
           >
             {mode === "usd" ? `+$${add}` : `+${add}`}
           </button>
@@ -487,17 +478,17 @@ function OrderBody({ stock, side, price, close }: Omit<Props, "open" | "onClose"
             setText("");
             setNotice(0);
           }}
-          className={`press h-11 flex-1 rounded-full text-[14px] font-semibold disabled:text-faint ${
+          className={`press h-11 min-w-0 flex-1 truncate rounded-full px-1 text-[14px] font-semibold disabled:text-faint ${
             isMax ? "bg-primary-soft text-primary" : "bg-fill text-sub active:bg-fill-strong"
           }`}
         >
-          최대
+          {t("c.max")}
         </button>
       </div>
 
       <Keypad onKey={press} />
 
-      <div className="px-5 pt-2">
+      <div className="sticky bottom-0 bg-card px-5 pb-1 pt-2">
         <button
           type="button"
           disabled={!canNext}
@@ -507,7 +498,7 @@ function OrderBody({ stock, side, price, close }: Omit<Props, "open" | "onClose"
           }}
           className={`press flex h-14 w-full items-center justify-center rounded-btn text-[17px] font-bold text-white disabled:bg-fill-strong disabled:text-faint ${accent}`}
         >
-          {quoteLoading ? <Spinner /> : "다음"}
+          {quoteLoading ? <Spinner /> : t("c.next")}
         </button>
       </div>
     </div>

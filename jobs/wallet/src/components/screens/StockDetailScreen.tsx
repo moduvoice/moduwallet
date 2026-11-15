@@ -3,36 +3,35 @@
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
-import { getHistory, useAsync, usePortfolio } from "@/lib/client";
+import { displayName, useLang, useT, type Key } from "@/i18n";
+import { getHistory, useAsync, useOnline, usePortfolio } from "@/lib/client";
 import type { HistoryPoint, Range, Stock } from "@/lib/types";
 import { Chart } from "../Chart";
-import { fmtDate, fmtDateTime, fmtPct, fmtQty, fmtSignedUsd, fmtUsd, toneArrow, toneOf, toneText } from "../format";
+import { MarketChip, StaleNote, useMarket } from "../chrome";
+import { fmtDate, fmtDateTime, fmtPct, fmtSignedUsd, fmtUsd, toneArrow, toneOf, toneText } from "../format";
 import { IconBack, IconBolt, IconChevron } from "../icons";
 import { usePrices, useStocks } from "../market";
 import { OrderSheet } from "../OrderSheet";
 import { usePerpPrices, usePerps } from "../perp";
 import { PerpOpenSheet } from "../PerpOpenSheet";
-import { btnGray, Card, ErrorState, Screen, Skeleton, StockLogo, unitOf } from "../ui";
+import { btnGray, Card, ErrorState, qtyText, Screen, Skeleton, StockLogo } from "../ui";
 
-const RANGES: { key: Range; label: string; word: string }[] = [
-  { key: "1D", label: "1일", word: "어제보다" },
-  { key: "1W", label: "1주", word: "1주 전보다" },
-  { key: "1M", label: "1달", word: "1달 전보다" },
-  { key: "3M", label: "3달", word: "3달 전보다" },
-  { key: "1Y", label: "1년", word: "1년 전보다" },
+const RANGES: { key: Range; label: Key; word: Key }[] = [
+  { key: "1D", label: "range.1D", word: "range.vs.1D" },
+  { key: "1W", label: "range.1W", word: "range.vs.1W" },
+  { key: "1M", label: "range.1M", word: "range.vs.1M" },
+  { key: "3M", label: "range.3M", word: "range.vs.3M" },
+  { key: "1Y", label: "range.1Y", word: "range.vs.1Y" },
 ];
 
-const UP = "#F04452";
-const DOWN = "#3182F6";
-const FLAT = "#8B95A1";
-
 function TopBar({ title }: { title?: string }) {
+  const t = useT();
   const router = useRouter();
   return (
     <header className="flex h-14 items-center px-2">
       <button
         type="button"
-        aria-label="뒤로"
+        aria-label={t("c.back")}
         onClick={() => {
           if (window.history.length > 1) router.back();
           else router.push("/stocks");
@@ -51,7 +50,7 @@ export function DetailFallback() {
   return (
     <Screen>
       <div className="h-14" />
-      <div className="px-5" role="status" aria-label="불러오는 중">
+      <div className="px-5" aria-hidden="true">
         <Skeleton className="h-11 w-11 !rounded-full" />
         <Skeleton className="mt-4 h-5 w-32" />
         <Skeleton className="mt-3 h-10 w-44" />
@@ -63,12 +62,18 @@ export function DetailFallback() {
 }
 
 export function StockDetailScreen() {
+  const t = useT();
+  const lang = useLang();
+  const online = useOnline();
+  const market = useMarket();
   const params = useParams<{ symbol: string }>();
+  // 주소의 기호는 대소문자를 가리지 않는다(/stocks/nvda 도 됨)
   const symbol = useMemo(() => {
+    const raw = params.symbol ?? "";
     try {
-      return decodeURIComponent(params.symbol ?? "");
+      return decodeURIComponent(raw).toUpperCase();
     } catch {
-      return params.symbol ?? "";
+      return raw.toUpperCase();
     }
   }, [params.symbol]);
 
@@ -82,9 +87,9 @@ export function StockDetailScreen() {
   const [order, setOrder] = useState<"buy" | "sell" | null>(null);
   const history = useAsync(() => getHistory(symbol, range), [symbol, range]);
 
-  const found = stocks.data?.find((s) => s.symbol === symbol);
-  const price = prices[symbol];
-  const held = pf.holdings.find((h) => h.symbol === symbol);
+  const found = stocks.data?.find((s) => s.symbol.toUpperCase() === symbol);
+  const price = prices[found?.symbol ?? symbol];
+  const held = pf.holdings.find((h) => h.symbol === (found?.symbol ?? symbol));
 
   if (stocks.loading && !stocks.data) return <DetailFallback />;
 
@@ -92,7 +97,7 @@ export function StockDetailScreen() {
     return (
       <Screen>
         <TopBar />
-        <ErrorState title="종목을 불러오지 못했어요" onRetry={stocks.reload} />
+        <ErrorState title={t("home.stocksFail")} onRetry={stocks.reload} />
       </Screen>
     );
   }
@@ -105,10 +110,10 @@ export function StockDetailScreen() {
           <span className="text-[44px] leading-none" aria-hidden="true">
             🤔
           </span>
-          <h1 className="mt-4 text-[20px] font-bold text-ink">찾을 수 없는 종목이에요</h1>
-          <p className="mt-1.5 text-[14px] text-mute">&lsquo;{symbol}&rsquo; 은 아직 거래할 수 없어요.</p>
+          <h1 className="mt-4 text-[20px] font-bold text-ink">{t("detail.notFound.title")}</h1>
+          <p className="mt-1.5 text-[14px] text-mute">{t("detail.notFound.body", { symbol })}</p>
           <Link href="/stocks" className={`${btnGray} mt-6 !h-12 !w-auto px-6 !text-[15px]`}>
-            다른 주식 찾기
+            {t("detail.notFound.cta")}
           </Link>
         </div>
       </Screen>
@@ -116,7 +121,8 @@ export function StockDetailScreen() {
   }
 
   const stock: Stock = found;
-  const unit = unitOf(stock.kind);
+  const coin = stock.kind === "crypto";
+  const name = displayName(lang, stock);
   // 방금 바꾼 기간의 기록이 올 때까지는 이전 기록을 흐리게 보여 준다
   const points = history.data && history.data.length >= 2 ? history.data : undefined;
   const rangeInfo = RANGES.find((r) => r.key === range)!;
@@ -125,7 +131,7 @@ export function StockDetailScreen() {
   const now = price?.price ?? points?.[points.length - 1]?.price;
   let diff: number | undefined;
   let ratio: number | undefined;
-  let word = rangeInfo.word;
+  let word = t(rangeInfo.word);
   if (scrub && points) {
     const base = points[0].price;
     diff = scrub.price - base;
@@ -141,9 +147,7 @@ export function StockDetailScreen() {
   }
   const shown = scrub?.price ?? now;
   const tone = toneOf(ratio ?? 0);
-
   const chartTone = points ? toneOf(points[points.length - 1].price / points[0].price - 1) : "flat";
-  const chartColor = chartTone === "up" ? UP : chartTone === "down" ? DOWN : FLAT;
 
   const value = held ? held.qty * (price?.price ?? held.avgPrice) : 0;
   const gain = held && price ? held.qty * (price.price - held.avgPrice) : 0;
@@ -156,21 +160,22 @@ export function StockDetailScreen() {
 
       <main className="flex flex-1 flex-col gap-3" style={{ paddingBottom: "calc(var(--safe-bottom) + 104px)" }}>
         <section className="px-5 pt-1">
-          <StockLogo symbol={stock.symbol} icon={stock.icon} size={44} />
-          <h1 className="mt-3 text-[17px] font-semibold text-sub">{(stock.nameKo ?? stock.name)}</h1>
+          <div className="flex items-start justify-between gap-2">
+            <StockLogo symbol={stock.symbol} icon={stock.icon} size={44} />
+            {!coin && <MarketChip />}
+          </div>
+          <h1 className="mt-3 text-[17px] font-semibold text-sub">{name}</h1>
           {shown !== undefined ? (
-            <p className="mt-0.5 text-[36px] font-bold leading-tight tracking-[-0.03em] tabular-nums text-ink">
-              {fmtUsd(shown)}
-            </p>
+            <p className="mt-0.5 text-[36px] font-bold leading-tight tracking-[-0.03em] tabular-nums text-ink">{fmtUsd(shown)}</p>
           ) : priceLoading || history.loading ? (
             <Skeleton className="mt-2 h-10 w-44" />
           ) : (
             <p className="mt-0.5 text-[36px] font-bold leading-tight text-faint">$—</p>
           )}
-          <p className="mt-1 min-h-[22px] text-[15px] font-medium">
+          <p className="mt-1 flex min-h-[22px] flex-wrap items-center gap-x-1.5 text-[15px] font-medium">
             {diff !== undefined && ratio !== undefined ? (
               <>
-                <span className="text-mute">{word} </span>
+                <span className="text-mute">{word}</span>
                 <span className={`tabular-nums ${toneText[tone]}`}>
                   {toneArrow[tone] && (
                     <span className="mr-0.5 text-[0.7em]" aria-hidden="true">
@@ -179,15 +184,17 @@ export function StockDetailScreen() {
                   )}
                   {fmtSignedUsd(diff)} ({fmtPct(ratio)})
                 </span>
+                {!scrub && <StaleNote at={price?.at} />}
               </>
             ) : priceLoading || history.loading ? (
               <Skeleton className="h-4 w-36" />
             ) : priceError ? (
               <button type="button" onClick={reloadPrice} className="-my-3 py-3 font-semibold text-primary">
-                시세 다시 불러오기
+                {t("price.reload")}
               </button>
             ) : null}
           </p>
+          {!coin && market && !market.open && <p className="mt-2 text-[12px] leading-relaxed text-hint">{t("market.closedNote")}</p>}
         </section>
 
         {/* 차트 */}
@@ -196,25 +203,25 @@ export function StockDetailScreen() {
             {points ? (
               <Chart
                 points={points}
-                color={chartColor}
+                tone={chartTone}
                 onScrub={setScrub}
-                label={`${(stock.nameKo ?? stock.name)} ${rangeInfo.label} 가격 그래프`}
+                label={t("detail.chart.aria", { name, range: t(rangeInfo.label) })}
               />
             ) : history.loading ? (
-              <div className="px-5" role="status" aria-label="그래프 불러오는 중">
+              <div className="px-5" role="status" aria-label={t("detail.chart.loading")}>
                 <Skeleton className="h-[200px] w-full !rounded-2xl" />
               </div>
             ) : history.error ? (
               <div className="flex h-[200px] items-center justify-center">
-                <ErrorState title="그래프를 불러오지 못했어요" message="" onRetry={history.reload} />
+                <ErrorState title={t("detail.chart.fail")} message="" onRetry={history.reload} />
               </div>
             ) : (
-              <div className="flex h-[200px] items-center justify-center text-[14px] text-mute">
-                이 기간에는 아직 기록이 없어요
+              <div className="flex h-[200px] items-center justify-center px-6 text-center text-[14px] text-mute">
+                {t("detail.chart.empty")}
               </div>
             )}
           </div>
-          <div className="mt-4 flex gap-1 px-4" role="group" aria-label="기간">
+          <div className="mt-4 flex gap-1 px-4" role="group" aria-label={t("detail.range.aria")}>
             {RANGES.map((r) => {
               const on = r.key === range;
               return (
@@ -226,11 +233,11 @@ export function StockDetailScreen() {
                     setScrub(null);
                     setRange(r.key);
                   }}
-                  className={`press h-11 flex-1 rounded-full text-[14px] font-semibold ${
+                  className={`press h-11 min-w-0 flex-1 truncate rounded-full px-1 text-[14px] font-semibold ${
                     on ? "bg-card text-ink shadow-[0_1px_3px_rgba(0,0,0,0.08)]" : "text-mute"
                   }`}
                 >
-                  {r.label}
+                  {t(r.label)}
                 </button>
               );
             })}
@@ -241,32 +248,31 @@ export function StockDetailScreen() {
         <div className="flex flex-col gap-3 px-4 pt-2">
           {held && (
             <Card className="px-5 py-5">
-              <h2 className="text-[18px] font-bold text-ink">내 {stock.kind === "crypto" ? "코인" : "주식"}</h2>
+              <h2 className="text-[18px] font-bold text-ink">{t(coin ? "detail.mine.coin" : "detail.mine.stock")}</h2>
               <dl className="mt-4 space-y-3 text-[15px]">
-                <Row label="가진 수량" value={`${fmtQty(held.qty)}${unit}`} />
-                <Row label="지금 가치" value={fmtUsd(value)} strong />
-                <Row label={`1${unit}당 산 가격`} value={fmtUsd(held.avgPrice)} />
+                <Row label={t("detail.qty")} value={qtyText(t, stock.kind, held.qty)} />
+                <Row label={t("detail.value")} value={fmtUsd(value)} strong />
+                <Row label={t(coin ? "detail.avg.coin" : "detail.avg.share")} value={fmtUsd(held.avgPrice)} />
                 {price && (
-                  <Row
-                    label="수익"
-                    value={`${fmtSignedUsd(gain)} (${fmtPct(gainRatio)})`}
-                    className={toneText[gainTone]}
-                  />
+                  <Row label={t("detail.gain")} value={`${fmtSignedUsd(gain)} (${fmtPct(gainRatio)})`} className={toneText[gainTone]} />
                 )}
               </dl>
             </Card>
           )}
 
-          <LeverageEntry symbol={symbol} />
+          <LeverageEntry symbol={stock.symbol} />
 
           <Card className="px-5 py-5">
-            <h2 className="text-[16px] font-bold text-ink">토큰화 {stock.kind === "crypto" ? "자산" : "주식"}이에요</h2>
+            <h2 className="text-[16px] font-bold text-ink">{t(coin ? "detail.token.title.coin" : "detail.token.title.stock")}</h2>
             <p className="mt-1.5 text-[14px] leading-relaxed text-mute">
-              {stock.kind === "crypto"
-                ? `${(stock.nameKo ?? stock.name)} 가격을 따라 움직이는 토큰이에요. 1달러부터 살 수 있고, 원금을 잃을 수 있어요.`
-                : `${(stock.nameKo ?? stock.name)} 주가를 따라 움직이는 토큰(증서)이에요. 실제 주식은 아니고, 1달러부터 살 수 있어요. 원금을 잃을 수 있어요.`}
+              {t(coin ? "detail.token.body.coin" : "detail.token.body.stock", { name })}
             </p>
-            <p className="mt-2 text-[12px] text-hint">시세·견적 제공: True Markets</p>
+            <p className="mt-2 text-[12px] text-hint">
+              {t("detail.source")} ·{" "}
+              <Link href="/terms" className="font-semibold underline underline-offset-2">
+                {t("menu.terms")}
+              </Link>
+            </p>
           </Card>
         </div>
       </main>
@@ -281,34 +287,31 @@ export function StockDetailScreen() {
             <button
               type="button"
               onClick={() => setOrder("sell")}
-              className="press flex h-14 flex-1 items-center justify-center rounded-btn bg-primary text-[17px] font-bold text-white active:bg-primary-press"
+              disabled={!online}
+              className="press flex h-14 min-w-0 flex-1 items-center justify-center rounded-btn bg-down px-2 text-[17px] font-bold text-white active:bg-down-press disabled:bg-fill-strong disabled:text-faint"
             >
-              팔기
+              {t("act.sell")}
             </button>
           )}
           <button
             type="button"
             onClick={() => setOrder("buy")}
-            className="press flex h-14 flex-1 items-center justify-center rounded-btn bg-up text-[17px] font-bold text-white active:bg-up-press"
+            disabled={!online}
+            className="press flex h-14 min-w-0 flex-1 items-center justify-center rounded-btn bg-up px-2 text-[17px] font-bold text-white active:bg-up-press disabled:bg-fill-strong disabled:text-faint"
           >
-            사기
+            {t("act.buy")}
           </button>
         </div>
       </div>
 
-      <OrderSheet
-        open={order !== null}
-        onClose={() => setOrder(null)}
-        stock={stock}
-        side={order ?? "buy"}
-        price={price?.price}
-      />
+      <OrderSheet open={order !== null} onClose={() => setOrder(null)} stock={stock} side={order ?? "buy"} price={price?.price} />
     </Screen>
   );
 }
 
 /** 같은 종목을 레버리지로도 거래할 수 있으면 보여 주는 입구 */
 function LeverageEntry({ symbol }: { symbol: string }) {
+  const t = useT();
   const perps = usePerps();
   const market = perps.data?.find((m) => m.symbol === symbol);
   const symbols = useMemo(() => (market ? [market.symbol] : []), [market]);
@@ -326,8 +329,8 @@ function LeverageEntry({ symbol }: { symbol: string }) {
           <IconBolt size={20} />
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block text-[15px] font-bold text-ink">레버리지로 거래하기</span>
-          <span className="block text-[13px] text-mute">최대 {market.maxLeverage}배 · 내릴 때도 벌 수 있어요</span>
+          <span className="block text-[15px] font-bold text-ink">{t("detail.lev.title")}</span>
+          <span className="block text-[13px] leading-snug text-mute">{t("detail.lev.sub", { n: market.maxLeverage })}</span>
         </span>
         <IconChevron size={18} className="shrink-0 text-faint" />
       </button>
@@ -339,8 +342,8 @@ function LeverageEntry({ symbol }: { symbol: string }) {
 function Row({ label, value, strong, className = "text-ink" }: { label: string; value: string; strong?: boolean; className?: string }) {
   return (
     <div className="flex items-baseline justify-between gap-3">
-      <dt className="text-sub">{label}</dt>
-      <dd className={`tabular-nums ${strong ? "text-[17px] font-bold" : "font-semibold"} ${className}`}>{value}</dd>
+      <dt className="min-w-0 text-sub">{label}</dt>
+      <dd className={`shrink-0 text-right tabular-nums ${strong ? "text-[17px] font-bold" : "font-semibold"} ${className}`}>{value}</dd>
     </div>
   );
 }
