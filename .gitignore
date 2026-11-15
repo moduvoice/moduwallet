@@ -1,0 +1,10 @@
+tmp/
+etc/ref/
+.env
+*.env
+signer-key.json
+*-api-key*.json
+node_modules/
+__pycache__/
+.DS_Store
+docs/evaluation.md
